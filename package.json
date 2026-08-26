@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc --noEmit",
-    "check": "npm run types && npm run build && npm test && wrangler deploy --dry-run",
+    "build": "npm run types && tsc --noEmit",
+    "check": "npm run build && npm test && wrangler deploy --dry-run",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 migrations apply nodemanage --local",
