@@ -1,193 +1,42 @@
-const state = { agents: [], profiles: [], clients: [], nodes: [], enrollment_codes: [], subscriptions: [] };
-const $ = (selector) => document.querySelector(selector);
-const headers = { "content-type": "application/json" };
-const profileCatalog = [
-  ["vless-reality-vision", "VLESS · Reality + Vision", "★★★★★", "首选：无需证书，密钥与 Short ID 自动生成"],
-  ["vless-tls-ws", "VLESS · TLS + WebSocket", "★★★★★", "兼容性高，需要已有 TLS 证书"],
-  ["vless-tls-grpc", "VLESS · TLS + gRPC", "★★★★", "多路复用，需要已有 TLS 证书"],
-  ["trojan-tls", "Trojan · TLS", "★★★★", "简单稳定，需要已有 TLS 证书"],
-  ["hysteria2-tls", "Hysteria2 · TLS", "★★★★★", "UDP/QUIC，高延迟线路优先"],
-  ["hysteria2-tls-obfs", "Hysteria2 · TLS + Salamander", "★★★★★", "增加固定混淆层，密码自动生成"],
-  ["tuic-tls", "TUIC · TLS", "★★★★", "UDP/QUIC，默认关闭 0-RTT"],
-  ["shadowsocks-aead", "Shadowsocks · AEAD 2022", "★★★★", "多用户 AES-128-GCM，凭据自动生成"],
+const state={vps:[],subscription_groups:[]};
+const $=(s,r=document)=>r.querySelector(s);
+const catalog=[
+ ["vless-reality-vision","VLESS · Reality + Vision","★★★★★"],["vless-tls-ws","VLESS · TLS + WebSocket","★★★★★"],
+ ["vless-tls-grpc","VLESS · TLS + gRPC","★★★★"],["trojan-tls","Trojan · TLS","★★★★"],
+ ["hysteria2-tls","Hysteria2 · TLS","★★★★★"],["hysteria2-tls-obfs","Hysteria2 · TLS + Obfs","★★★★★"],
+ ["tuic-tls","TUIC · TLS","★★★★"],["shadowsocks-aead","Shadowsocks · AEAD 2022","★★★★"]
 ];
-let profileDefaults = {};
-
-async function api(path, options = {}) {
-  const response = await fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
-  const data = await response.json();
-  if (response.status === 401) { location.replace("/login"); throw new Error("请重新登录"); }
-  if (!response.ok) throw new Error(data.error || response.statusText);
-  return data;
-}
-
-function notice(message, error = false) {
-  const element = $("#notice");
-  element.textContent = message;
-  element.style.color = error ? "#ff8b8b" : "#72f1b8";
-}
-
-function textElement(tag, text, className = "") {
-  const element = document.createElement(tag);
-  element.textContent = text;
-  if (className) element.className = className;
-  return element;
-}
-
-function formatBytes(value) {
-  if (!value) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let number = Number(value), index = 0;
-  while (number >= 1024 && index < units.length - 1) { number /= 1024; index += 1; }
-  return `${number.toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
-}
-
-function fact(parent, label, value) {
-  const box = document.createElement("div");
-  box.append(textElement("span", label), document.createTextNode(value));
-  parent.append(box);
-}
-
-function renderAgents() {
-  const root = $("#agents"); root.replaceChildren();
-  $("#agent-count").textContent = String(state.agents.length);
-  for (const agent of state.agents) {
-    const card = textElement("article", "", "card");
-    const head = textElement("div", "", "card-head");
-    const title = textElement("strong", agent.name);
-    const online = agent.last_seen && Date.now() - Date.parse(`${agent.last_seen}Z`) < 150000;
-    head.append(title, textElement("span", online ? "在线" : "离线", online ? "online" : "offline"));
-    const facts = textElement("div", "", "facts");
-    fact(facts, "地址", agent.public_ip || "—");
-    fact(facts, "系统", `${agent.os}/${agent.architecture}`);
-    fact(facts, "sing-box", agent.singbox_version || "未上报");
-    fact(facts, "配置版本", `${agent.current_revision || "—"} → ${agent.desired_revision || "—"}`);
-    fact(facts, "内存", `${formatBytes(agent.memory_used_bytes)} / ${formatBytes(agent.memory_total_bytes)}`);
-    fact(facts, "磁盘", `${formatBytes(agent.disk_used_bytes)} / ${formatBytes(agent.disk_total_bytes)}`);
-    const permissions = textElement("pre", agent.permissions_json || "{}", "permissions");
-    const publish = textElement("button", "发布当前 Profile");
-    publish.addEventListener("click", () => action(`/api/admin/agents/${agent.id}/publish`, {}));
-    card.append(head, facts, permissions, publish);
-    if (agent.last_error) card.append(textElement("p", agent.last_error, "offline"));
-    root.append(card);
-  }
-  if (!state.agents.length) root.append(textElement("div", "尚未注册 Agent", "panel muted"));
-}
-
-function setOptions(selector, values, label) {
-  const select = $(selector); select.replaceChildren();
-  for (const value of values) {
-    const option = document.createElement("option"); option.value = value.id; option.textContent = label(value); select.append(option);
-  }
-}
-
-function renderLists() {
-  const clients = $("#clients"); clients.replaceChildren();
-  state.clients.forEach((client) => { const row = document.createElement("div"); row.append(textElement("span", client.name), textElement("code", client.uuid)); clients.append(row); });
-  const profiles = $("#profiles"); profiles.replaceChildren();
-  state.profiles.forEach((profile) => { const row = document.createElement("div"); row.append(textElement("span", profile.name), textElement("code", profile.type)); profiles.append(row); });
-  renderToggleList("#codes", state.enrollment_codes, "enrollment-codes", (value) => `${value.name} · 已使用 ${value.use_count}${value.max_uses ? `/${value.max_uses}` : " 次"}`);
-  renderToggleList("#subscriptions", state.subscriptions, "subscriptions", (value) => `${value.name} · ${value.client_name}`);
-  setOptions("#node-agent", state.agents, (value) => value.name);
-  setOptions("#node-profile", state.profiles, (value) => `${value.name} · ${value.type}`);
-  setOptions("#subscription-client", state.clients, (value) => value.name);
-}
-
-function renderToggleList(selector, values, resource, label) {
-  const root = $(selector); root.replaceChildren();
-  for (const value of values) {
-    const row = document.createElement("div");
-    const button = textElement("button", value.enabled ? "停用" : "启用", "secondary");
-    button.addEventListener("click", () => action(`/api/admin/${resource}/${value.id}/enabled`, { enabled: !Boolean(value.enabled) }));
-    row.append(textElement("span", label(value)), button); root.append(row);
-  }
-}
-
-async function load() {
-  try {
-    Object.assign(state, await api("/api/admin/state"));
-    renderAgents(); renderLists(); notice("数据已刷新");
-  } catch (error) { notice(error.message, true); }
-}
-
-async function action(path, body) {
-  try { await api(path, { method: "POST", body: JSON.stringify(body) }); notice("操作成功"); await load(); }
-  catch (error) { notice(error.message, true); }
-}
-
-function formObject(form) { return Object.fromEntries(new FormData(form).entries()); }
-
-$("#code-form").addEventListener("submit", async (event) => {
-  event.preventDefault(); const values = formObject(event.currentTarget);
-  const body = { name: values.name }; if (values.max_uses) body.max_uses = Number(values.max_uses);
-  try { const result = await api("/api/admin/enrollment-codes", { method: "POST", body: JSON.stringify(body) }); $("#install-command").textContent = `curl -fsSL ${location.origin}/install.sh | sudo sh -s -- --code ${result.code}`; await load(); }
-  catch (error) { notice(error.message, true); }
-});
-
-$("#client-form").addEventListener("submit", (event) => { event.preventDefault(); action("/api/admin/clients", formObject(event.currentTarget)); });
-$("#node-form").addEventListener("submit", (event) => { event.preventDefault(); action("/api/admin/nodes", formObject(event.currentTarget)); });
-$("#profile-form").addEventListener("submit", (event) => {
-  event.preventDefault();
-  const values = formObject(event.currentTarget), settings = {};
-  document.querySelectorAll("#profile-fields [data-setting]").forEach((field) => { settings[field.name] = field.type === "number" ? Number(field.value) : field.value; });
-  action("/api/admin/profiles", { name: values.name, type: values.type, settings });
-});
-$("#subscription-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try { const result = await api("/api/admin/subscriptions", { method: "POST", body: JSON.stringify(formObject(event.currentTarget)) }); $("#subscription-links").textContent = [`${location.origin}/sub/${result.token}/sing-box`, `${location.origin}/sub/${result.token}/mihomo`, `${location.origin}/sub/${result.token}/uri`].join("\n"); await load(); }
-  catch (error) { notice(error.message, true); }
-});
-function profileField(label, name, value, options = {}) {
-  const wrapper = document.createElement("label"); wrapper.append(document.createTextNode(label));
-  let field;
-  if (options.choices) {
-    field = document.createElement("select");
-    options.choices.forEach(([key, text]) => { const option = document.createElement("option"); option.value = key; option.textContent = text; field.append(option); });
-  } else {
-    field = document.createElement("input"); field.type = options.type || "text";
-  }
-  field.name = name; field.value = value ?? ""; field.dataset.setting = ""; field.required = true;
-  if (options.readonly) { field.readOnly = true; wrapper.classList.add("auto-field"); }
-  wrapper.append(field); return wrapper;
-}
-
-async function renderProfileFields() {
-  const type = $("#profile-type").value;
-  const selected = profileCatalog.find(([key]) => key === type);
-  $("#profile-priority").textContent = `${selected[2]} · ${selected[3]}`;
-  const result = await api(`/api/admin/profile-defaults?type=${encodeURIComponent(type)}`);
-  if ($("#profile-type").value !== type) return;
-  profileDefaults = result.settings;
-  const root = $("#profile-fields"); root.replaceChildren();
-  root.append(profileField("端口", "listen_port", profileDefaults.listen_port, { type: "number" }));
-  if (type === "vless-reality-vision") {
-    const target = profileField("Reality 目标", "reality_target", profileDefaults.reality_handshake_server, { choices: [["www.microsoft.com", "Microsoft · 推荐"], ["www.apple.com", "Apple"], ["www.cloudflare.com", "Cloudflare"], ["custom", "自定义"]] });
-    const select = target.querySelector("select");
-    select.removeAttribute("data-setting");
-    const handshake = document.createElement("input"); handshake.type = "hidden"; handshake.name = "reality_handshake_server"; handshake.value = profileDefaults.reality_handshake_server; handshake.dataset.setting = "";
-    const custom = profileField("自定义目标", "reality_custom", ""); custom.style.display = "none"; custom.querySelector("input").removeAttribute("data-setting");
-    select.addEventListener("change", () => {
-      const isCustom = select.value === "custom"; custom.style.display = isCustom ? "grid" : "none";
-      if (!isCustom) { handshake.value = select.value; root.querySelector("[name=server_name]").value = select.value; }
-    });
-    custom.querySelector("input").addEventListener("input", (event) => { handshake.value = event.target.value; root.querySelector("[name=server_name]").value = event.target.value; });
-    root.append(target, custom, handshake, profileField("Server Name · 自动", "server_name", profileDefaults.server_name, { readonly: true }), profileField("Flow · 固定", "flow_display", "xtls-rprx-vision", { readonly: true }), profileField("Private Key · 自动", "reality_private_key", profileDefaults.reality_private_key, { readonly: true }), profileField("Public Key · 自动", "reality_public_key", profileDefaults.reality_public_key, { readonly: true }), profileField("Short ID · 自动", "reality_short_id", profileDefaults.reality_short_id, { readonly: true }), profileField("握手端口", "reality_handshake_port", 443, { type: "number" }));
-    root.querySelector("[name=flow_display]").removeAttribute("data-setting");
-  } else if (type === "shadowsocks-aead") {
-    root.append(profileField("加密方式 · 固定", "shadowsocks_method", profileDefaults.shadowsocks_method, { readonly: true }), profileField("服务器主密码 · 自动", "shadowsocks_server_password", profileDefaults.shadowsocks_server_password, { readonly: true }));
-  } else {
-    root.append(profileField("Server Name / SNI", "server_name", profileDefaults.server_name), profileField("证书路径", "certificate_path", profileDefaults.certificate_path), profileField("私钥路径", "key_path", profileDefaults.key_path));
-    if (type === "vless-tls-ws") root.append(profileField("WebSocket 路径", "ws_path", profileDefaults.ws_path), profileField("WebSocket Host", "ws_host", profileDefaults.ws_host));
-    if (type === "vless-tls-grpc") root.append(profileField("gRPC Service Name", "grpc_service_name", profileDefaults.grpc_service_name));
-    if (type === "hysteria2-tls-obfs") root.append(profileField("Salamander 密码 · 自动", "hysteria2_obfs_password", profileDefaults.hysteria2_obfs_password, { readonly: true }));
-    if (type === "tuic-tls") root.append(profileField("拥塞控制", "tuic_congestion_control", profileDefaults.tuic_congestion_control, { choices: [["cubic", "CUBIC · 推荐"], ["bbr", "BBR"], ["new_reno", "New Reno"]] }));
-  }
-}
-
-for (const [value, label] of profileCatalog) { const option = document.createElement("option"); option.value = value; option.textContent = label; $("#profile-type").append(option); }
-$("#profile-type").addEventListener("change", renderProfileFields);
-$("#regenerate-profile").addEventListener("click", renderProfileFields);
-$("#refresh").addEventListener("click", load);
-$("#logout").addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.replace("/login"); });
-renderProfileFields();
-load();
+async function api(path,options={}){const response=await fetch(path,{...options,headers:{"content-type":"application/json",...(options.headers||{})}});let data={};try{data=await response.json()}catch{}if(response.status===401){location.replace("/login");throw new Error("请重新登录")}if(!response.ok)throw new Error(data.error||response.statusText);return data}
+function el(tag,text="",className=""){const node=document.createElement(tag);node.textContent=text;if(className)node.className=className;return node}
+function notice(message,error=false){const node=$("#notice");node.textContent=message;node.className=`show${error?" error":""}`;clearTimeout(notice.timer);notice.timer=setTimeout(()=>{node.className="";node.textContent=""},3000)}
+function pct(used,total){return total?Math.min(100,Math.round(Number(used)*100/Number(total))):null}
+function uptime(seconds){if(!seconds)return "—";const days=Math.floor(seconds/86400),hours=Math.floor(seconds%86400/3600);return days?`${days}天 ${hours}小时`:`${hours}小时`}
+function online(vps){if(!vps.agent_id||!vps.last_seen)return false;const stamp=Date.parse(vps.last_seen.endsWith("Z")?vps.last_seen:`${vps.last_seen}Z`);return Date.now()-stamp<150000}
+function protocolLabel(type){return catalog.find(x=>x[0]===type)?.[1]||type}
+function shortVersion(value){const match=String(value||"").match(/\d+(?:\.\d+){1,3}/);return match?.[0]||"—"}
+function configState(vps){if(vps.last_error)return ["发布失败","error"];if(vps.draft)return ["待发布","pending"];if(vps.desired_revision&&vps.current_revision!==vps.desired_revision)return ["同步中","pending"];if(vps.current_revision)return ["已同步","online"];return ["未发布","muted"]}
+function statusBox(vps){const box=el("div","","status-stack");let label="待安装",cls="pending";if(vps.agent_id){label=online(vps)?"在线":"离线";cls=online(vps)?"online":"offline"}const main=el("span",label,`status ${cls}`),config=configState(vps);box.append(main,el("span",config[0],`config-state ${config[1]}`));return box}
+function actionButton(label,handler,cls="secondary"){const button=el("button",label,cls);if(typeof handler==="function")button.addEventListener("click",handler);return button}
+function renderVps(){const root=$("#vps-list");root.replaceChildren();$("#vps-count").textContent=state.vps.length;for(const vps of state.vps){const row=el("article","","vps-grid list-row");const settings=JSON.parse(vps.settings_json);const identity=el("div","","identity");identity.append(el("strong",vps.name),el("div",`${vps.region||"未设置地区"} · ${vps.address||"等待 Agent 上报地址"}`,"meta"),el("span",`${protocolLabel(vps.type)} · ${settings.listen_port}`,"protocol"));const versions=el("div",`A${shortVersion(vps.agent_version)} · S${shortVersion(vps.singbox_version)} · V${vps.current_revision||"—"}`,"versions");const cpu=vps.cpu_usage_percent==null?null:Math.round(Number(vps.cpu_usage_percent)),mem=pct(vps.memory_used_bytes,vps.memory_total_bytes);const resources=el("div","","resources");resources.append(el("div",`CPU ${cpu===null?"—":`${cpu}%`}`),el("div",`内存 ${mem===null?"—":`${mem}%`}`),el("div",`运行 ${uptime(vps.uptime_seconds)}`));const actions=el("div","","actions");actions.append(actionButton("安装",()=>installVps(vps)),actionButton("编辑",()=>openVps(vps)),actionButton("发布",()=>publishVps(vps),"primary-action"),actionButton("更多",()=>showDetails(vps)));row.append(identity,statusBox(vps),versions,resources,actions);root.append(row)}if(!state.vps.length)root.append(el("div","还没有 VPS，点击右上角创建第一台。","empty"))}
+function renderSubscriptions(){const root=$("#subscription-list");root.replaceChildren();$("#subscription-count").textContent=state.subscription_groups.length;for(const group of state.subscription_groups){const row=el("article","","subscription-grid list-row");const name=el("div","","subscription-name");name.append(el("strong",group.name),el("div",`创建于 ${group.created_at||"—"}`,"meta"));const tags=el("div","","node-tags");group.nodes.forEach(id=>tags.append(el("span",state.vps.find(v=>v.id===id)?.name||"已移除节点")));const clients=el("div","","client-list");clients.append(el("strong",`${group.clients.length} 个客户端`),el("div",group.clients.map(c=>c.name).join("、")||"—"));const status=el("div","","status-stack");status.append(el("span",group.enabled?"启用":"停用",`status ${group.enabled?"online":"offline"}`));const actions=el("div","","actions");actions.append(actionButton("查看",()=>showGroup(group)),actionButton("管理",""));actions.lastChild.disabled=true;row.append(name,tags,clients,status,actions);root.append(row)}if(!state.subscription_groups.length)root.append(el("div","还没有订阅，创建后可为多个客户端生成独立链接。","empty"))}
+async function load(silent=false){try{Object.assign(state,await api("/api/admin/state"));renderVps();renderSubscriptions();if(!silent)notice("数据已刷新")}catch(error){notice(error.message,true)}}
+function openDrawer(kicker,title,content){$("#drawer-kicker").textContent=kicker;$("#drawer-title").textContent=title;const root=$("#drawer-content");root.replaceChildren(content);$("#drawer").classList.add("open");$("#drawer").setAttribute("aria-hidden","false");$("#drawer-backdrop").hidden=false}
+function closeDrawer(){$("#drawer").classList.remove("open");$("#drawer").setAttribute("aria-hidden","true");$("#drawer-backdrop").hidden=true}
+function field(label,name,type="text",value=""){const wrap=el("label",label);const input=document.createElement("input");input.name=name;input.type=type;input.value=value??"";wrap.append(input);return wrap}
+function selectField(label,name,options,value){const wrap=el("label",label),select=document.createElement("select");select.name=name;for(const [key,text] of options){const option=el("option",text);option.value=key;option.selected=key===value;select.append(option)}wrap.append(select);return wrap}
+function profileFields(type,settings){const root=el("div","","form-section field-grid");root.dataset.profileFields="";root.append(field("端口","listen_port","number",settings.listen_port));if(type==="vless-reality-vision"){root.append(selectField("Reality 目标","reality_handshake_server",[["www.microsoft.com","Microsoft · 推荐"],["www.apple.com","Apple"],["www.cloudflare.com","Cloudflare"]],settings.reality_handshake_server),field("Server Name","server_name","text",settings.server_name),field("Private Key · 自动","reality_private_key","text",settings.reality_private_key),field("Public Key · 自动","reality_public_key","text",settings.reality_public_key),field("Short ID · 自动","reality_short_id","text",settings.reality_short_id),field("握手端口","reality_handshake_port","number",settings.reality_handshake_port))}else if(type==="shadowsocks-aead"){root.append(field("加密方法","shadowsocks_method","text",settings.shadowsocks_method),field("服务器主密码 · 自动","shadowsocks_server_password","text",settings.shadowsocks_server_password))}else{root.append(field("Server Name / SNI","server_name","text",settings.server_name),field("证书路径","certificate_path","text",settings.certificate_path),field("私钥路径","key_path","text",settings.key_path));if(type==="vless-tls-ws")root.append(field("WebSocket 路径","ws_path","text",settings.ws_path),field("WebSocket Host","ws_host","text",settings.ws_host));if(type==="vless-tls-grpc")root.append(field("gRPC Service Name","grpc_service_name","text",settings.grpc_service_name));if(type==="hysteria2-tls-obfs")root.append(field("Obfs 密码 · 自动","hysteria2_obfs_password","text",settings.hysteria2_obfs_password));if(type==="tuic-tls")root.append(selectField("拥塞控制","tuic_congestion_control",[["cubic","CUBIC · 推荐"],["bbr","BBR"],["new_reno","New Reno"]],settings.tuic_congestion_control))}return root}
+async function defaults(type){return (await api(`/api/admin/profile-defaults?type=${encodeURIComponent(type)}`)).settings}
+async function openVps(vps=null){const form=document.createElement("form"),settings=vps?JSON.parse(vps.settings_json):await defaults("vless-reality-vision");const basics=el("div","","field-grid");basics.append(field("名称","name","text",vps?.name||""),field("地区","region","text",vps?.region||""),field("连接地址（可留空自动上报）","address","text",vps?.configured_address||""));const typeSelect=selectField("协议组合","type",catalog.map(x=>[x[0],`${x[1]} ${x[2]}`]),vps?.type||"vless-reality-vision");basics.append(typeSelect);form.append(basics,profileFields(vps?.type||"vless-reality-vision",settings));const regenerate=actionButton("重新生成自动参数",async()=>{const type=$("select[name=type]",form).value;$("[data-profile-fields]",form).replaceWith(profileFields(type,await defaults(type)))});regenerate.type="button";const help=el("p","Reality 默认只需确认端口与目标；密钥、Short ID 等参数自动生成。保存后需要点击发布才会同步到 VPS。","form-help");const actions=el("div","","form-actions");actions.append(actionButton("取消",closeDrawer),actionButton(vps?"保存修改":"创建并生成安装命令",()=>{},"primary-action"));actions.lastChild.type="submit";form.append(regenerate,help,actions);$("select[name=type]",form).addEventListener("change",async e=>{$("[data-profile-fields]",form).replaceWith(profileFields(e.target.value,await defaults(e.target.value)))});form.addEventListener("change",e=>{if(e.target.name==="reality_handshake_server"){const server=$("input[name=server_name]",form);if(server)server.value=e.target.value}});form.addEventListener("submit",async e=>{e.preventDefault();const data=new FormData(form),body={name:data.get("name"),region:data.get("region"),address:data.get("address"),type:data.get("type"),settings:{}};$("[data-profile-fields]",form).querySelectorAll("input,select").forEach(input=>body.settings[input.name]=input.type==="number"?Number(input.value):input.value);try{const result=await api(vps?`/api/admin/vps/${vps.id}`:"/api/admin/vps",{method:vps?"PUT":"POST",body:JSON.stringify(body)});closeDrawer();await load(true);notice(vps?"修改已保存，等待发布":"VPS 已创建");if(!vps)showInstall(result.code,result.name)}catch(error){notice(error.message,true)}});openDrawer("VPS",vps?"编辑 VPS":"创建 VPS",form)}
+function showResult(title,content){$("#result-title").textContent=title;const root=$("#result-content");root.replaceChildren(content);$("#result-dialog").showModal()}
+function copyBlock(text){const wrap=el("div","","result-block"),pre=el("pre",text,"output"),button=actionButton("复制",async()=>{await navigator.clipboard.writeText(text);notice("已复制")});wrap.append(pre,button);return wrap}
+function showInstall(code,name="VPS"){const command=`curl -fsSL ${location.origin}/install.sh | sudo sh -s -- --code ${code}`;const content=document.createDocumentFragment();content.append(el("p",`${name} 的永久安装码已生成。重新生成后旧码会停用。`,"muted"),copyBlock(command));showResult("安装 Agent",content)}
+async function installVps(vps){try{const result=await api(`/api/admin/vps/${vps.id}/install`,{method:"POST",body:"{}"});showInstall(result.code,vps.name);await load(true)}catch(error){notice(error.message,true)}}
+async function publishVps(vps){try{await api(`/api/admin/vps/${vps.id}/publish`,{method:"POST",body:"{}"});notice("配置已发布，等待 Agent 同步");await load(true)}catch(error){notice(error.message,true)}}
+function showDetails(vps){const root=el("div");const values=[["Agent 权限",vps.permissions_json||"等待上报"],["系统",`${vps.os||"—"} / ${vps.architecture||"—"}`],["主机名",vps.hostname||"—"],["公网地址",vps.public_ip||"—"],["磁盘",`${pct(vps.disk_used_bytes,vps.disk_total_bytes)??"—"}%`],["最近上报",vps.last_seen||"—"],["错误",vps.last_error||"无"]];for(const [key,value] of values){const block=el("div","","result-block");block.append(el("h3",key),el(key==="Agent 权限"?"pre":"p",String(value),key==="Agent 权限"?"output":"muted"));root.append(block)}openDrawer("DETAILS",vps.name,root)}
+function addClientInput(root,value=""){const row=el("div","","field-grid"),input=field("客户端名称","client_name","text",value),remove=actionButton("移除",()=>row.remove());row.append(input,remove);root.append(row)}
+function openSubscription(){const form=document.createElement("form");form.append(field("订阅名称","name","text",""));const section=el("div","","form-section");section.append(el("h3","绑定 VPS"));const checks=el("div","","check-list");state.vps.forEach(vps=>{const label=el("label","","check-row"),input=document.createElement("input");input.type="checkbox";input.name="node_id";input.value=vps.id;label.append(input,el("span",`${vps.name} · ${vps.address||"待安装"}`));checks.append(label)});section.append(checks);const clientSection=el("div","","form-section");clientSection.append(el("h3","客户端（每个客户端使用独立凭据）"));const inputs=el("div","","client-inputs");addClientInput(inputs);clientSection.append(inputs,actionButton("＋ 添加客户端",()=>addClientInput(inputs)));const actions=el("div","","form-actions");actions.append(actionButton("取消",closeDrawer),actionButton("创建订阅",()=>{},"primary-action"));actions.lastChild.type="submit";form.append(section,clientSection,actions);form.addEventListener("submit",async e=>{e.preventDefault();const data=new FormData(form),body={name:data.get("name"),node_ids:data.getAll("node_id"),client_names:data.getAll("client_name").filter(Boolean)};try{const result=await api("/api/admin/subscription-groups",{method:"POST",body:JSON.stringify(body)});closeDrawer();await load(true);showSubscriptionResult(result);notice("订阅已创建")}catch(error){notice(error.message,true)}});openDrawer("SUBSCRIPTION","创建订阅",form)}
+function showSubscriptionResult(result){const content=document.createDocumentFragment();content.append(el("p",`${result.node_ids.length} 台 VPS · ${result.members.length} 个独立客户端`,"muted"));for(const member of result.members){const urls=[`${location.origin}/sub/${member.token}/sing-box`,`${location.origin}/sub/${member.token}/mihomo`,`${location.origin}/sub/${member.token}/uri`].join("\n");const block=el("div","","result-block");block.append(el("h3",member.name),copyBlock(urls));content.append(block)}showResult(result.name,content)}
+function showGroup(group){const root=el("div");root.append(el("p","订阅地址只在创建时显示。为避免明文保存令牌，如需新地址请新建订阅客户端。","form-help"));for(const client of group.clients){const block=el("div","","result-block");block.append(el("h3",client.name),el("p",client.enabled?"已启用":"已停用","muted"));root.append(block)}openDrawer("SUBSCRIPTION",group.name,root)}
+document.querySelectorAll("[data-view]").forEach(button=>button.addEventListener("click",()=>{document.querySelectorAll("[data-view]").forEach(x=>x.classList.toggle("active",x===button));document.querySelectorAll(".view").forEach(x=>x.classList.toggle("active",x.id===`${button.dataset.view}-view`));location.hash=button.dataset.view}));
+$("#create-vps").addEventListener("click",()=>openVps());$("#create-subscription").addEventListener("click",openSubscription);$("#close-drawer").addEventListener("click",closeDrawer);$("#drawer-backdrop").addEventListener("click",closeDrawer);$("#close-result").addEventListener("click",()=>$("#result-dialog").close());$("#refresh").addEventListener("click",()=>load());$("#logout").addEventListener("click",async()=>{await fetch("/api/auth/logout",{method:"POST"});location.replace("/login")});
+if(location.hash==="#subscriptions")$("[data-view=subscriptions]").click();load(true);

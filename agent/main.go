@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version           = "0.1.0"
+	version           = "0.2.0"
 	defaultConfigPath = "/etc/nodemanage/agent.json"
 	maxResponseBytes  = 3 << 20
 )
@@ -55,6 +55,7 @@ type syncRequest struct {
 	SingBoxVersion   string      `json:"singbox_version"`
 	CurrentRevision  *int64      `json:"current_revision"`
 	SingBoxRunning   bool        `json:"singbox_running"`
+	CPUUsagePercent  float64     `json:"cpu_usage_percent"`
 	UptimeSeconds    int64       `json:"uptime_seconds"`
 	MemoryTotalBytes int64       `json:"memory_total_bytes"`
 	MemoryUsedBytes  int64       `json:"memory_used_bytes"`
@@ -71,9 +72,15 @@ type syncResponse struct {
 }
 
 type agent struct {
-	configPath string
-	config     config
-	client     *http.Client
+	configPath  string
+	config      config
+	client      *http.Client
+	previousCPU cpuSample
+}
+
+type cpuSample struct {
+	total uint64
+	idle  uint64
 }
 
 func main() {
@@ -164,9 +171,11 @@ func (a *agent) sync() error {
 	currentRevision := readRevision(a.config.RuntimePath + ".revision")
 	memoryTotal, memoryUsed := memoryStats()
 	diskTotal, diskUsed := diskStats(filepath.Dir(a.config.RuntimePath))
+	cpuUsage := a.cpuUsage()
 	request := syncRequest{
 		AgentVersion: version, SingBoxVersion: commandOutput(a.config.SingBoxPath, "version"), CurrentRevision: currentRevision,
 		SingBoxRunning: commandOK("systemctl", "is-active", "--quiet", a.config.ServiceName), UptimeSeconds: uptimeSeconds(),
+		CPUUsagePercent:  cpuUsage,
 		MemoryTotalBytes: memoryTotal, MemoryUsedBytes: memoryUsed, DiskTotalBytes: diskTotal, DiskUsedBytes: diskUsed,
 		Permissions: collectPermissions(a.config),
 	}
@@ -192,6 +201,38 @@ func (a *agent) sync() error {
 		return fmt.Errorf("apply result: %v; report result: %w", err, reportErr)
 	}
 	return err
+}
+
+func (a *agent) cpuUsage() float64 {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0
+	}
+	line := strings.SplitN(string(data), "\n", 2)[0]
+	fields := strings.Fields(line)
+	if len(fields) < 5 || fields[0] != "cpu" {
+		return 0
+	}
+	var sample cpuSample
+	for index, field := range fields[1:] {
+		value, parseErr := strconv.ParseUint(field, 10, 64)
+		if parseErr != nil {
+			return 0
+		}
+		sample.total += value
+		if index == 3 || index == 4 {
+			sample.idle += value
+		}
+	}
+	previous := a.previousCPU
+	a.previousCPU = sample
+	if previous.total == 0 || sample.total <= previous.total {
+		return 0
+	}
+	totalDelta := sample.total - previous.total
+	idleDelta := sample.idle - previous.idle
+	usage := 100 * float64(totalDelta-idleDelta) / float64(totalDelta)
+	return float64(int(usage*10+0.5)) / 10
 }
 
 func (a *agent) apply(revision int64, configJSON, expectedHash string) error {

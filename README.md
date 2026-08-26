@@ -61,13 +61,14 @@ ADMIN_PASSWORD="至少六位的管理密码"
 
 ## 使用流程
 
-1. 在管理界面创建永久安装码。`最大使用次数` 留空时可以长期重复使用；禁用安装码即可停止后续注册。
-2. 在 VPS 执行界面生成的一行命令。脚本固定安装 sing-box 1.13.12，并校验官方 checksums 文件。
-3. 创建客户端。
-4. 从 8 个固定协议组合创建 Profile。Reality 密钥、Short ID、Hysteria2 混淆密码和 Shadowsocks 主密码均由 Worker 自动生成。
-5. 把 Agent、Profile 和节点连接地址绑定。
-6. 发布配置。Agent 会先执行 `sing-box check`，失败时不替换当前配置；重启失败时恢复单个备份配置。
-7. 创建订阅，Token 和链接只在创建响应中显示一次。
+管理界面只有 **VPS** 和 **订阅** 两个主版块，桌面端使用紧凑表格，移动端自动切换为卡片和全屏编辑抽屉。
+
+1. 在 VPS 列表点击“创建 VPS”，选择协议组合并确认少量必要参数。Reality 密钥、Short ID、Hysteria2 混淆密码和 Shadowsocks 主密码均由 Worker 自动生成。
+2. 复制该 VPS 的永久安装命令并在服务器执行。重新生成安装码会停用该 VPS 的旧码。脚本固定安装 sing-box 1.13.12，并校验官方 checksums 文件。
+3. 在订阅列表创建订阅，选择一个或多个 VPS，再添加一个或多个客户端。每个客户端拥有独立凭据和订阅 Token。
+4. 回到 VPS 列表发布配置。Agent 会先执行 `sing-box check`，失败时不替换当前配置；重启失败时恢复单个备份配置。
+
+VPS 列表集中显示 Agent/sing-box/配置版本、CPU/内存/运行时间、在线状态、配置同步状态和常用操作。订阅 Token 和链接只在创建响应中显示一次。
 
 第一版固定支持：VLESS Reality + Vision、VLESS TLS + WS、VLESS TLS + gRPC、Trojan TLS、Hysteria2 TLS、Hysteria2 TLS + Salamander、TUIC TLS、Shadowsocks AEAD 2022。AnyTLS、VMess、ShadowTLS 和 Naive 暂不进入生成器。
 

@@ -1,86 +1,33 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="color-scheme" content="dark">
-    <title>NodeManage</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="/styles.css">
-  </head>
-  <body>
-    <header>
-      <div><span class="mark">NM</span><strong>NodeManage</strong></div>
-      <div><span class="muted">sing-box control plane</span><button id="logout" class="secondary small">退出</button></div>
-    </header>
-    <main>
-      <section class="hero">
-        <div><p class="eyebrow">CONTROL PLANE</p><h1>节点管理</h1><p>配置经过 Cloudflare，代理流量直达 VPS。</p></div>
-        <button id="refresh" class="secondary">刷新</button>
-      </section>
-      <div id="notice" role="status"></div>
-
-      <section>
-        <div class="section-title"><h2>VPS / Agent</h2><span id="agent-count" class="badge">0</span></div>
-        <div id="agents" class="grid"></div>
-      </section>
-
-      <section class="two-column">
-        <div class="panel">
-          <h2>永久安装码</h2>
-          <form id="code-form">
-            <label>名称<input name="name" required placeholder="通用安装码"></label>
-            <label>最大使用次数<input name="max_uses" type="number" min="1" placeholder="留空表示无限"></label>
-            <button>生成安装码</button>
-          </form>
-          <pre id="install-command" class="output">生成后仅显示一次</pre>
-          <div id="codes" class="compact-list"></div>
-        </div>
-        <div class="panel">
-          <h2>客户端</h2>
-          <form id="client-form">
-            <label>名称<input name="name" required placeholder="我的设备"></label>
-            <button>创建客户端</button>
-          </form>
-          <div id="clients" class="compact-list"></div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="section-title"><div><h2>Protocol Profile</h2><p class="muted">固定组合、推荐默认值；通常只需选择类型、端口和目标。</p></div><span class="badge">8 个稳定模板</span></div>
-        <form id="profile-form" class="form-grid">
-          <label>备注 / 名称<input name="name" required placeholder="香港 VPS"></label>
-          <label>协议组合<select name="type" id="profile-type"></select></label>
-          <div id="profile-priority" class="profile-summary"></div>
-          <div id="profile-fields" class="form-grid nested"></div>
-          <div class="profile-actions"><button type="button" id="regenerate-profile" class="secondary">重新生成自动参数</button><button>保存 Profile</button></div>
-        </form>
-        <div id="profiles" class="compact-list"></div>
-      </section>
-
-      <section class="two-column">
-        <div class="panel">
-          <h2>绑定节点</h2>
-          <form id="node-form">
-            <label>Agent<select name="agent_id" id="node-agent" required></select></label>
-            <label>Profile<select name="profile_id" id="node-profile" required></select></label>
-            <label>节点名称<input name="name" required></label>
-            <label>连接地址<input name="address" required placeholder="1.2.3.4 或域名"></label>
-            <button>保存绑定</button>
-          </form>
-        </div>
-        <div class="panel">
-          <h2>订阅</h2>
-          <form id="subscription-form">
-            <label>名称<input name="name" required></label>
-            <label>客户端<select name="client_id" id="subscription-client" required></select></label>
-            <button>生成订阅</button>
-          </form>
-          <pre id="subscription-links" class="output">生成后仅显示一次</pre>
-          <div id="subscriptions" class="compact-list"></div>
-        </div>
-      </section>
-    </main>
-    <script type="module" src="/app.js"></script>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>NodeManage</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#vps"><span class="mark">NM</span><strong>NodeManage</strong></a>
+    <nav aria-label="主导航"><button class="nav-item active" data-view="vps">VPS</button><button class="nav-item" data-view="subscriptions">订阅</button></nav>
+    <div class="top-actions"><button id="refresh" class="icon-button" title="刷新">↻</button><button id="logout" class="secondary small">退出</button></div>
+  </header>
+  <main>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <section id="vps-view" class="view active">
+      <div class="page-heading"><div><p class="eyebrow">INFRASTRUCTURE</p><h1>VPS 列表 <span id="vps-count" class="count">0</span></h1><p>管理服务器、协议、配置发布与运行状态。</p></div><button id="create-vps">＋ 创建 VPS</button></div>
+      <div class="list-shell"><div class="vps-grid list-head"><span>VPS</span><span>状态</span><span>运行版本</span><span>资源</span><span>操作</span></div><div id="vps-list"></div></div>
+    </section>
+    <section id="subscriptions-view" class="view">
+      <div class="page-heading"><div><p class="eyebrow">DELIVERY</p><h1>订阅列表 <span id="subscription-count" class="count">0</span></h1><p>一个订阅可绑定多个 VPS，并为每个客户端生成独立链接。</p></div><button id="create-subscription">＋ 创建订阅</button></div>
+      <div class="list-shell"><div class="subscription-grid list-head"><span>订阅</span><span>绑定 VPS</span><span>客户端</span><span>状态</span><span>操作</span></div><div id="subscription-list"></div></div>
+    </section>
+  </main>
+  <div id="drawer-backdrop" class="backdrop" hidden></div>
+  <aside id="drawer" class="drawer" aria-hidden="true"><div class="drawer-head"><div><p id="drawer-kicker" class="eyebrow"></p><h2 id="drawer-title"></h2></div><button id="close-drawer" class="icon-button" aria-label="关闭">×</button></div><div id="drawer-content" class="drawer-content"></div></aside>
+  <dialog id="result-dialog"><div class="dialog-head"><h2 id="result-title">结果</h2><button id="close-result" class="icon-button">×</button></div><div id="result-content"></div></dialog>
+  <script src="/app.js" defer></script>
+</body>
 </html>
