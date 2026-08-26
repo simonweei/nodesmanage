@@ -161,7 +161,7 @@ async function createSubscriptionGroup(request: Request, env: Env): Promise<Resp
   const id = randomUuid();
   const name = stringField(body, "name", { required: true, max: 100 });
   const nodeIds = stringArray(body.node_ids, "node_ids");
-  const clientNames = stringArray(body.client_names, "client_names", 20);
+  const clientNames = body.client_names === undefined ? [name] : stringArray(body.client_names, "client_names", 20);
   const placeholders = nodeIds.map(() => "?").join(",");
   const found = await env.DB.prepare(`SELECT id FROM nodes WHERE enabled=1 AND id IN (${placeholders})`).bind(...nodeIds).all();
   if (found.results.length !== nodeIds.length) throw new HttpError(400, "one or more VPS nodes are unavailable");
