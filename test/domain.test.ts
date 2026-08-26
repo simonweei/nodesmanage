@@ -74,4 +74,14 @@ describe("admin authentication boundary", () => {
       headers: { "cf-access-authenticated-user-email": "admin@example.com" },
     }), authEnv)).rejects.toThrow("admin login required");
   });
+
+  it("accepts six-character secrets and rejects shorter configuration", async () => {
+    const sixCharacterEnv = { ADMIN_PASSWORD: "abc123" };
+    await expect(handleAdminAuth(new Request("https://manage.example.com/api/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "abc123" }),
+    }), sixCharacterEnv)).resolves.toMatchObject({ status: 200 });
+    await expect(handleAdminAuth(new Request("https://manage.example.com/api/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "abc12" }),
+    }), { ADMIN_PASSWORD: "abc12" })).rejects.toThrow("at least 6 characters");
+  });
 });

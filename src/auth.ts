@@ -36,8 +36,8 @@ function cookieValue(request: Request): string | null {
 }
 
 function configuredPassword(env: Pick<Env, "ADMIN_PASSWORD">): string {
-  if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.length < 12) {
-    throw new HttpError(503, "ADMIN_PASSWORD must be configured with at least 12 characters");
+  if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.length < 6) {
+    throw new HttpError(503, "ADMIN_PASSWORD must be configured with at least 6 characters");
   }
   return env.ADMIN_PASSWORD;
 }

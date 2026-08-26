@@ -25,7 +25,7 @@ npm run dev
 本地开发前创建不会提交到 Git 的 `.dev.vars`：
 
 ```dotenv
-ADMIN_PASSWORD="至少十二位的管理密码"
+ADMIN_PASSWORD="至少六位的管理密码"
 ```
 
 ## 部署
@@ -42,7 +42,7 @@ ADMIN_PASSWORD="至少十二位的管理密码"
    ./scripts/build-agent.sh
    ```
 
-3. 设置管理密码 Secret。密码至少 12 个字符，值不会写入仓库：
+3. 设置管理密码 Secret。密码至少 6 个字符，值不会写入仓库：
 
    ```bash
    npx wrangler secret put ADMIN_PASSWORD

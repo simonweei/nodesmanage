@@ -15,7 +15,7 @@
       <h1>登录</h1>
       <p>输入管理密码后进入节点控制面板。</p>
       <form id="login-form">
-        <label>管理密码<input name="password" type="password" required minlength="12" autocomplete="current-password" autofocus></label>
+        <label>管理密码<input name="password" type="password" required minlength="6" autocomplete="current-password" autofocus></label>
         <div id="login-error" class="login-error" role="alert"></div>
         <button>进入控制面板</button>
       </form>
