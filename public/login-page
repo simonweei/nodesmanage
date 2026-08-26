@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>登录 · NodeManage</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body class="login-page">
+    <main class="login-card">
+      <span class="mark">NM</span>
+      <p class="eyebrow">CONTROL PLANE</p>
+      <h1>登录</h1>
+      <p>输入管理密码后进入节点控制面板。</p>
+      <form id="login-form">
+        <label>管理密码<input name="password" type="password" required minlength="12" autocomplete="current-password" autofocus></label>
+        <div id="login-error" class="login-error" role="alert"></div>
+        <button>进入控制面板</button>
+      </form>
+    </main>
+    <script type="module" src="/login.js"></script>
+  </body>
+</html>

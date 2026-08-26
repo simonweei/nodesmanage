@@ -35,10 +35,17 @@ input, select { width: 100%; padding: 10px 11px; color: #e9edf5; background: #09
 input:focus, select:focus { border-color: #72f1b8; box-shadow: 0 0 0 3px #72f1b81a; }
 button { border: 0; background: #72f1b8; color: #07110d; font-weight: 750; padding: 10px 15px; cursor: pointer; }
 button.secondary { color: #dce5f3; background: #1c2533; border: 1px solid #30394b; }
+button.small { padding: 6px 10px; font-size: 12px; }
 button:hover { filter: brightness(1.08); }
 .compact-list { margin-top: 14px; display: grid; gap: 7px; }
 .compact-list > div { display: flex; justify-content: space-between; border-top: 1px solid #252d3b; padding-top: 8px; color: #aab5c7; font-size: 13px; }
 .output { white-space: pre-wrap; word-break: break-all; min-height: 48px; padding: 12px; border-radius: 9px; background: #090d14; color: #72f1b8; font: 12px/1.55 ui-monospace, monospace; }
 #notice { min-height: 20px; color: #ffb86b; font-size: 13px; }
 .muted { color: #738198; }
+.login-page { display: grid; place-items: center; min-height: 100vh; padding: 20px; }
+.login-card { width: min(390px, 100%); border: 1px solid #242b39; background: #10151fee; border-radius: 18px; padding: 28px; box-shadow: 0 24px 70px #0008; }
+.login-card .mark { margin-bottom: 24px; }
+.login-card h1 { font-size: 30px; margin-bottom: 8px; }
+.login-card form { margin-top: 24px; }
+.login-error { min-height: 20px; color: #ff8b8b; font-size: 13px; }
 @media (max-width: 760px) { .two-column, .form-grid { grid-template-columns: 1fr; } main { padding-top: 34px; } header .muted { display: none; } }

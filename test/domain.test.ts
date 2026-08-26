@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { requireAdmin } from "../src/auth";
+import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
 import { compileServerConfig, parseProfileSettings, type ProfileSettings, type ProfileType } from "../src/domain";
 import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src/subscriptions";
 
@@ -50,11 +50,28 @@ describe("subscriptions", () => {
 });
 
 describe("admin authentication boundary", () => {
-  it("only accepts the development header on loopback", () => {
-    expect(requireAdmin(new Request("http://127.0.0.1/api/admin/state", { headers: { "x-admin-email": "local@example.com" } }))).toBe("local@example.com");
-    expect(() => requireAdmin(new Request("https://manage.example.com/api/admin/state", { headers: { "x-admin-email": "spoofed@example.com" } }))).toThrow("Cloudflare Access");
+  const authEnv = { ADMIN_PASSWORD: "correct-horse-battery-staple" };
+
+  it("creates and verifies a signed HttpOnly session", async () => {
+    const response = await handleAdminAuth(new Request("https://manage.example.com/api/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: authEnv.ADMIN_PASSWORD }),
+    }), authEnv);
+    const setCookie = response.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("SameSite=Strict");
+    expect(setCookie).toContain("Secure");
+    const cookie = setCookie.split(";")[0];
+    const request = new Request("https://manage.example.com/api/admin/state", { headers: { cookie } });
+    expect(await hasAdminSession(request, authEnv)).toBe(true);
+    await expect(requireAdmin(request, authEnv)).resolves.toBeUndefined();
   });
-  it("accepts Cloudflare Access identity on production hosts", () => {
-    expect(requireAdmin(new Request("https://manage.example.com/api/admin/state", { headers: { "cf-access-authenticated-user-email": "admin@example.com" } }))).toBe("admin@example.com");
+
+  it("rejects wrong passwords and Access headers without a session", async () => {
+    await expect(handleAdminAuth(new Request("https://manage.example.com/api/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "wrong-password" }),
+    }), authEnv)).rejects.toThrow("密码错误");
+    await expect(requireAdmin(new Request("https://manage.example.com/api/admin/state", {
+      headers: { "cf-access-authenticated-user-email": "admin@example.com" },
+    }), authEnv)).rejects.toThrow("admin login required");
   });
 });

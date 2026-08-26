@@ -22,7 +22,11 @@ npm run db:local
 npm run dev
 ```
 
-本地管理界面会发送 `x-admin-email` 开发请求头。该请求头只在请求目标为 `localhost`、`127.0.0.1` 或 `::1` 时有效。
+本地开发前创建不会提交到 Git 的 `.dev.vars`：
+
+```dotenv
+ADMIN_PASSWORD="至少十二位的管理密码"
+```
 
 ## 部署
 
@@ -38,16 +42,22 @@ npm run dev
    ./scripts/build-agent.sh
    ```
 
-3. 应用数据库迁移并部署：
+3. 设置管理密码 Secret。密码至少 12 个字符，值不会写入仓库：
+
+   ```bash
+   npx wrangler secret put ADMIN_PASSWORD
+   ```
+
+   使用 Cloudflare Git 构建时，也可以在 Worker 的 **Settings → Variables and Secrets** 中添加同名加密 Secret。
+
+4. 应用数据库迁移并部署：
 
    ```bash
    npm run db:remote
    npm run deploy
    ```
 
-4. 给管理域名配置 Cloudflare Access。生产环境的 `/api/admin/*` 只接受 Access 注入的用户邮箱；`/api/agent/*`、`/sub/*` 和 `/install.sh` 必须在 Access Application 中配置为绕过登录，由各自 Token 保护。
-
-不要暴露未受 Access 保护的备用 `workers.dev` 管理入口。建议使用自定义域名，并在生产配置中关闭不需要的预览入口。
+访问管理域名时会跳转到密码登录页。登录会话有效 12 小时，并使用签名的 `HttpOnly`、`SameSite=Strict` Cookie；修改 `ADMIN_PASSWORD` 会立即令已有会话失效。Agent、订阅和安装码继续使用各自独立 Token，不依赖控制面板会话。
 
 ## 使用流程
 

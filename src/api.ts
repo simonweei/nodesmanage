@@ -243,7 +243,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if (path === "/api/agent/sync" && request.method === "POST") return syncAgent(request, env);
   if (path === "/api/agent/result" && request.method === "POST") return agentResult(request, env);
 
-  requireAdmin(request);
+  await requireAdmin(request, env);
   if (path === "/api/admin/state" && request.method === "GET") return listAdmin(env);
   if (path === "/api/admin/profile-defaults" && request.method === "GET") {
     const type = parseProfileType(url.searchParams.get("type"));

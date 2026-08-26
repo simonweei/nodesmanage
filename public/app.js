@@ -1,6 +1,6 @@
 const state = { agents: [], profiles: [], clients: [], nodes: [], enrollment_codes: [], subscriptions: [] };
 const $ = (selector) => document.querySelector(selector);
-const headers = { "content-type": "application/json", "x-admin-email": "local@nodemanage.invalid" };
+const headers = { "content-type": "application/json" };
 const profileCatalog = [
   ["vless-reality-vision", "VLESS · Reality + Vision", "★★★★★", "首选：无需证书，密钥与 Short ID 自动生成"],
   ["vless-tls-ws", "VLESS · TLS + WebSocket", "★★★★★", "兼容性高，需要已有 TLS 证书"],
@@ -16,6 +16,7 @@ let profileDefaults = {};
 async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
   const data = await response.json();
+  if (response.status === 401) { location.replace("/login"); throw new Error("请重新登录"); }
   if (!response.ok) throw new Error(data.error || response.statusText);
   return data;
 }
@@ -187,5 +188,6 @@ for (const [value, label] of profileCatalog) { const option = document.createEle
 $("#profile-type").addEventListener("change", renderProfileFields);
 $("#regenerate-profile").addEventListener("click", renderProfileFields);
 $("#refresh").addEventListener("click", load);
+$("#logout").addEventListener("click", async () => { await fetch("/api/auth/logout", { method: "POST" }); location.replace("/login"); });
 renderProfileFields();
 load();
