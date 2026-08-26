@@ -1,0 +1,60 @@
+import { describe, expect, it } from "vitest";
+import { requireAdmin } from "../src/auth";
+import { compileServerConfig, parseProfileSettings, type ProfileSettings, type ProfileType } from "../src/domain";
+import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src/subscriptions";
+
+const client = {
+  id: "client-1", name: "Alice", uuid: "11111111-1111-4111-8111-111111111111",
+  hysteria2_password: "hy-secret", trojan_password: "trojan-secret", tuic_password: "tuic-secret", shadowsocks_password: "dXNlci1rZXktMTIzNA==",
+};
+const tls = { listen_port: 443, server_name: "node.example.com", certificate_path: "/etc/sing-box/cert.pem", key_path: "/etc/sing-box/key.pem" };
+const cases: [ProfileType, ProfileSettings, string][] = [
+  ["vless-reality-vision", { listen_port: 443, server_name: "www.microsoft.com", reality_private_key: "private", reality_public_key: "public", reality_short_id: "0123456789abcdef", reality_handshake_server: "www.microsoft.com", reality_handshake_port: 443 }, "vless"],
+  ["vless-tls-ws", { ...tls, ws_path: "/ws", ws_host: "node.example.com" }, "vless"],
+  ["vless-tls-grpc", { ...tls, grpc_service_name: "grpc" }, "vless"],
+  ["trojan-tls", tls, "trojan"],
+  ["hysteria2-tls", { ...tls, listen_port: 8443 }, "hysteria2"],
+  ["hysteria2-tls-obfs", { ...tls, listen_port: 8443, hysteria2_obfs_password: "obfs-secret" }, "hysteria2"],
+  ["tuic-tls", { ...tls, listen_port: 8443, tuic_congestion_control: "cubic" }, "tuic"],
+  ["shadowsocks-aead", { listen_port: 8388, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: "c2VydmVyLWtleS0xMjM=" }, "shadowsocks"],
+];
+
+describe("eight constrained Protocol Profiles", () => {
+  it.each(cases)("parses and compiles %s", (type, settings, inboundType) => {
+    const parsed = parseProfileSettings(type, settings);
+    const inbound = (compileServerConfig(type, parsed, [client]).inbounds as Record<string, unknown>[])[0];
+    expect(inbound).toMatchObject({ type: inboundType, listen_port: settings.listen_port });
+  });
+
+  it("keeps security-sensitive fixed choices", () => {
+    const tuic = (compileServerConfig("tuic-tls", cases[6][1], [client]).inbounds as Record<string, unknown>[])[0];
+    expect(tuic.zero_rtt_handshake).toBe(false);
+    const ss = (compileServerConfig("shadowsocks-aead", cases[7][1], [client]).inbounds as Record<string, unknown>[])[0];
+    expect(ss).toMatchObject({ network: "tcp", multiplex: { enabled: true } });
+  });
+
+  it("rejects invalid ports, paths and short IDs", () => {
+    expect(() => parseProfileSettings("trojan-tls", { ...tls, listen_port: 70000 })).toThrow("valid port");
+    expect(() => parseProfileSettings("vless-tls-ws", { ...tls, ws_path: "ws", ws_host: "node.example.com" })).toThrow("start with /");
+    expect(() => parseProfileSettings("vless-reality-vision", { ...cases[0][1], reality_short_id: "not-hex" })).toThrow("hexadecimal");
+  });
+});
+
+describe("subscriptions", () => {
+  it.each(cases)("generates sing-box, Mihomo and URI for %s", (type, settings, protocol) => {
+    const node = { id: `node-${type}`, name: "Tokyo", address: "node.example.com", type, settings_json: JSON.stringify(settings) };
+    expect((JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { type: string }).type).toBe(protocol);
+    expect(mihomoSubscription(client, [node])).toContain("proxies:");
+    expect(uriSubscription(client, [node])).toContain("node.example.com");
+  });
+});
+
+describe("admin authentication boundary", () => {
+  it("only accepts the development header on loopback", () => {
+    expect(requireAdmin(new Request("http://127.0.0.1/api/admin/state", { headers: { "x-admin-email": "local@example.com" } }))).toBe("local@example.com");
+    expect(() => requireAdmin(new Request("https://manage.example.com/api/admin/state", { headers: { "x-admin-email": "spoofed@example.com" } }))).toThrow("Cloudflare Access");
+  });
+  it("accepts Cloudflare Access identity on production hosts", () => {
+    expect(requireAdmin(new Request("https://manage.example.com/api/admin/state", { headers: { "cf-access-authenticated-user-email": "admin@example.com" } }))).toBe("admin@example.com");
+  });
+});

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>NodeManage</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header>
+      <div><span class="mark">NM</span><strong>NodeManage</strong></div>
+      <span class="muted">sing-box control plane</span>
+    </header>
+    <main>
+      <section class="hero">
+        <div><p class="eyebrow">CONTROL PLANE</p><h1>节点管理</h1><p>配置经过 Cloudflare，代理流量直达 VPS。</p></div>
+        <button id="refresh" class="secondary">刷新</button>
+      </section>
+      <div id="notice" role="status"></div>
+
+      <section>
+        <div class="section-title"><h2>VPS / Agent</h2><span id="agent-count" class="badge">0</span></div>
+        <div id="agents" class="grid"></div>
+      </section>
+
+      <section class="two-column">
+        <div class="panel">
+          <h2>永久安装码</h2>
+          <form id="code-form">
+            <label>名称<input name="name" required placeholder="通用安装码"></label>
+            <label>最大使用次数<input name="max_uses" type="number" min="1" placeholder="留空表示无限"></label>
+            <button>生成安装码</button>
+          </form>
+          <pre id="install-command" class="output">生成后仅显示一次</pre>
+          <div id="codes" class="compact-list"></div>
+        </div>
+        <div class="panel">
+          <h2>客户端</h2>
+          <form id="client-form">
+            <label>名称<input name="name" required placeholder="我的设备"></label>
+            <button>创建客户端</button>
+          </form>
+          <div id="clients" class="compact-list"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-title"><div><h2>Protocol Profile</h2><p class="muted">固定组合、推荐默认值；通常只需选择类型、端口和目标。</p></div><span class="badge">8 个稳定模板</span></div>
+        <form id="profile-form" class="form-grid">
+          <label>备注 / 名称<input name="name" required placeholder="香港 VPS"></label>
+          <label>协议组合<select name="type" id="profile-type"></select></label>
+          <div id="profile-priority" class="profile-summary"></div>
+          <div id="profile-fields" class="form-grid nested"></div>
+          <div class="profile-actions"><button type="button" id="regenerate-profile" class="secondary">重新生成自动参数</button><button>保存 Profile</button></div>
+        </form>
+        <div id="profiles" class="compact-list"></div>
+      </section>
+
+      <section class="two-column">
+        <div class="panel">
+          <h2>绑定节点</h2>
+          <form id="node-form">
+            <label>Agent<select name="agent_id" id="node-agent" required></select></label>
+            <label>Profile<select name="profile_id" id="node-profile" required></select></label>
+            <label>节点名称<input name="name" required></label>
+            <label>连接地址<input name="address" required placeholder="1.2.3.4 或域名"></label>
+            <button>保存绑定</button>
+          </form>
+        </div>
+        <div class="panel">
+          <h2>订阅</h2>
+          <form id="subscription-form">
+            <label>名称<input name="name" required></label>
+            <label>客户端<select name="client_id" id="subscription-client" required></select></label>
+            <button>生成订阅</button>
+          </form>
+          <pre id="subscription-links" class="output">生成后仅显示一次</pre>
+          <div id="subscriptions" class="compact-list"></div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
