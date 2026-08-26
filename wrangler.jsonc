@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "nodemanage",
-      "database_id": "3287135e-2b4f-4ada-aec1-a63e8d6a017c",
+      "database_id": "9f948740-d311-4993-911e-30633a2dddcc",
       "migrations_dir": "./migrations"
     }
   ],
