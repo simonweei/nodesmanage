@@ -1,116 +1,62 @@
+import { AGENT_VERSION, RELEASE_DIGESTS } from "./generated-releases";
+
 export function installScript(origin: string): Response {
   const safeOrigin = origin.replace(/[^A-Za-z0-9:/.\-_]/g, "");
   const script = `#!/bin/sh
 set -eu
 
-SERVER_URL=${safeOrigin}
-SING_BOX_VERSION=1.13.12
-CODE=""
-NAME=""
-
+SERVER_URL='${safeOrigin}'
+TICKET=''
+NAME=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --code) CODE="\${2:-}"; shift 2 ;;
+    --ticket) TICKET="\${2:-}"; shift 2 ;;
     --name) NAME="\${2:-}"; shift 2 ;;
-    *) echo "unknown argument: $1" >&2; exit 2 ;;
+    *) echo "[NM-E101] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-[ "$(id -u)" -eq 0 ] || { echo "run this installer as root" >&2; exit 1; }
-[ -n "$CODE" ] || { echo "--code is required" >&2; exit 2; }
-command -v curl >/dev/null 2>&1 || { echo "curl is required" >&2; exit 1; }
-command -v tar >/dev/null 2>&1 || { echo "tar is required" >&2; exit 1; }
-command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required" >&2; exit 1; }
-
+[ "$(id -u)" -eq 0 ] || { echo "[NM-E102] run this installer as root" >&2; exit 1; }
+[ -n "$TICKET" ] || { echo "[NM-E103] --ticket is required" >&2; exit 2; }
 case "$(uname -m)" in
-  x86_64|amd64) ARCH=amd64 ;;
-  aarch64|arm64) ARCH=arm64 ;;
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+  x86_64|amd64) ARCH=amd64; EXPECTED='${RELEASE_DIGESTS.amd64.agentSha256}' ;;
+  aarch64|arm64) ARCH=arm64; EXPECTED='${RELEASE_DIGESTS.arm64.agentSha256}' ;;
+  *) echo "[NM-E104] unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-[ -n "$NAME" ] || NAME="$(hostname)"
-TMP_DIR="$(mktemp -d)"
+[ -n "$NAME" ] || NAME="$(hostname 2>/dev/null || uname -n)"
+TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t nodemanage)"
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
 
-curl -fL --retry 3 --connect-timeout 10 "$SERVER_URL/downloads/nodemanage-agent-linux-$ARCH" -o "$TMP_DIR/nodemanage-agent"
-curl -fL --retry 3 --connect-timeout 10 "$SERVER_URL/downloads/SHA256SUMS" -o "$TMP_DIR/agent-checksums.txt"
-AGENT_FILE="nodemanage-agent-linux-$ARCH"
-AGENT_EXPECTED="$(awk -v f="$AGENT_FILE" '$2 == f {print $1}' "$TMP_DIR/agent-checksums.txt")"
-[ -n "$AGENT_EXPECTED" ] || { echo "Agent checksum not found" >&2; exit 1; }
-AGENT_ACTUAL="$(sha256sum "$TMP_DIR/nodemanage-agent" | awk '{print $1}')"
-[ "$AGENT_EXPECTED" = "$AGENT_ACTUAL" ] || { echo "Agent checksum mismatch" >&2; exit 1; }
+download() {
+  source_url="$1" destination="$2"
+  if command -v curl >/dev/null 2>&1; then curl -fL --retry 3 --connect-timeout 10 "$source_url" -o "$destination"
+  elif command -v wget >/dev/null 2>&1; then wget -O "$destination" "$source_url"
+  elif command -v busybox >/dev/null 2>&1; then busybox wget -O "$destination" "$source_url"
+  else echo "[NM-E105] curl, wget or busybox is required" >&2; exit 1
+  fi
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v busybox >/dev/null 2>&1 && busybox sha256sum "$1" >/dev/null 2>&1; then busybox sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else echo "[NM-E106] no SHA-256 tool is available" >&2; exit 1
+  fi
+}
+
+MANIFEST_URL="$SERVER_URL/api/install/manifest?os=linux&arch=$ARCH"
+download "$SERVER_URL/downloads/v${AGENT_VERSION}/nodemanage-agent-linux-$ARCH" "$TMP_DIR/nodemanage-agent"
+ACTUAL="$(sha256_file "$TMP_DIR/nodemanage-agent")"
+[ "$EXPECTED" = "$ACTUAL" ] || { echo "[NM-E108] Agent checksum mismatch" >&2; exit 1; }
 chmod 0755 "$TMP_DIR/nodemanage-agent"
-install -m 0755 "$TMP_DIR/nodemanage-agent" /usr/local/bin/nodemanage-agent
-
-if ! command -v sing-box >/dev/null 2>&1; then
-  BASE="sing-box-$SING_BOX_VERSION-linux-$ARCH"
-  curl -fL --retry 3 --connect-timeout 10 "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/$BASE.tar.gz" -o "$TMP_DIR/sing-box.tar.gz"
-  curl -fL --retry 3 --connect-timeout 10 "https://github.com/SagerNet/sing-box/releases/download/v$SING_BOX_VERSION/sing-box-$SING_BOX_VERSION-checksums.txt" -o "$TMP_DIR/checksums.txt"
-  EXPECTED="$(awk -v f="$BASE.tar.gz" '$2 == f {print $1}' "$TMP_DIR/checksums.txt")"
-  [ -n "$EXPECTED" ] || { echo "sing-box checksum not found" >&2; exit 1; }
-  ACTUAL="$(sha256sum "$TMP_DIR/sing-box.tar.gz" | awk '{print $1}')"
-  [ "$EXPECTED" = "$ACTUAL" ] || { echo "sing-box checksum mismatch" >&2; exit 1; }
-  tar -xzf "$TMP_DIR/sing-box.tar.gz" -C "$TMP_DIR"
-  install -m 0755 "$TMP_DIR/$BASE/sing-box" /usr/local/bin/sing-box
-fi
-
-install -d -m 0700 /etc/nodemanage
-install -d -m 0755 /etc/sing-box
-[ -f /etc/sing-box/config.json ] || printf '%s\n' '{"inbounds":[],"outbounds":[{"type":"direct"}]}' >/etc/sing-box/config.json
-chmod 0600 /etc/sing-box/config.json
-
-cat >/etc/systemd/system/sing-box.service <<'UNIT'
-[Unit]
-Description=sing-box proxy service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/sing-box run -c /etc/sing-box/config.json
-Restart=on-failure
-RestartSec=5s
-LimitNOFILE=1048576
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-if [ ! -s /etc/nodemanage/agent.json ]; then
-  /usr/local/bin/nodemanage-agent register --server "$SERVER_URL" --code "$CODE" --name "$NAME"
-fi
-
-cat >/etc/systemd/system/nodemanage-agent.service <<'UNIT'
-[Unit]
-Description=NodeManage Agent
-After=network-online.target sing-box.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/nodemanage-agent run
-Restart=always
-RestartSec=10s
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now sing-box.service nodemanage-agent.service
-echo "NodeManage Agent installed successfully"
+"$TMP_DIR/nodemanage-agent" install --server "$SERVER_URL" --ticket "$TICKET" --name "$NAME" --manifest "$MANIFEST_URL"
 `;
-  return new Response(script, {
-    headers: {
-      "content-type": "text/x-shellscript; charset=utf-8",
-      "content-disposition": "inline; filename=install.sh",
-      "cache-control": "public, max-age=300",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return new Response(script, { headers: {
+    "content-type": "text/x-shellscript; charset=utf-8",
+    "content-disposition": "inline; filename=install.sh",
+    "cache-control": "public, max-age=300",
+    "x-content-type-options": "nosniff",
+  } });
 }

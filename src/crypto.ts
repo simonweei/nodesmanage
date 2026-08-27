@@ -5,6 +5,13 @@ export async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+export async function hmacHex(secret: string, message: string): Promise<string> {
+  if (secret.length < 32) throw new Error("AGENT_TOKEN_SECRET must contain at least 32 characters");
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(message));
+  return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 export function randomToken(bytes = 32): string {
   const value = new Uint8Array(bytes);
   crypto.getRandomValues(value);

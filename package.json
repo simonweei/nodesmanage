@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "npm run types && tsc --noEmit",
+    "build": "npm run release:check && npm run types && tsc --noEmit",
     "check": "npm run build && npm test && wrangler deploy --dry-run",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "release:generate": "node scripts/generate-release-manifest.mjs",
+    "release:check": "node scripts/generate-release-manifest.mjs --check",
     "db:local": "wrangler d1 migrations apply nodemanage --local",
     "db:remote": "wrangler d1 migrations apply nodemanage --remote",
     "test": "vitest run",

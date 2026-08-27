@@ -1,4 +1,6 @@
 node_modules/
+NodeHub_ControlPlane-main11/
+NodeHub_ControlPlane-main22/
 .wrangler/
 .dev.vars*
 .env*

@@ -20,8 +20,11 @@
   "vars": {
     "AGENT_POLL_SECONDS": "60"
   },
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
   "secrets": {
-    "required": ["ADMIN_PASSWORD"]
+    "required": ["ADMIN_PASSWORD", "AGENT_TOKEN_SECRET"]
   },
   "observability": {
     "enabled": true,

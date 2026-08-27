@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,14 +13,13 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	version           = "0.2.0"
+	version           = "0.4.0"
 	defaultConfigPath = "/etc/nodemanage/agent.json"
 	maxResponseBytes  = 3 << 20
 )
@@ -34,20 +32,27 @@ type config struct {
 	SingBoxPath string `json:"sing_box_path"`
 	ServiceName string `json:"service_name"`
 	RuntimePath string `json:"runtime_config_path"`
-	BackupPath  string `json:"backup_config_path"`
+	InitSystem  string `json:"init_system"`
+	InstallMode string `json:"install_mode"`
 }
 
 type permissions struct {
-	User              string `json:"user"`
-	UID               int    `json:"uid"`
-	EUID              int    `json:"euid"`
-	GID               int    `json:"gid"`
-	IsRoot            bool   `json:"is_root"`
-	EffectiveCapsHex  string `json:"effective_capabilities_hex"`
-	ConfigReadable    bool   `json:"config_readable"`
-	ConfigWritable    bool   `json:"config_writable"`
-	SingBoxExecutable bool   `json:"sing_box_executable"`
-	ServiceControl    bool   `json:"service_control"`
+	User                string `json:"user"`
+	UID                 int    `json:"uid"`
+	EUID                int    `json:"euid"`
+	GID                 int    `json:"gid"`
+	IsRoot              bool   `json:"is_root"`
+	EffectiveCapsHex    string `json:"effective_capabilities_hex"`
+	ConfigReadable      bool   `json:"config_readable"`
+	ConfigWritable      bool   `json:"config_writable"`
+	SingBoxExecutable   bool   `json:"sing_box_executable"`
+	ServiceControl      bool   `json:"service_control"`
+	Distribution        string `json:"distribution"`
+	DistributionVersion string `json:"distribution_version"`
+	Libc                string `json:"libc"`
+	InitSystem          string `json:"init_system"`
+	InstallMode         string `json:"install_mode"`
+	BindLowPort         bool   `json:"bind_low_port"`
 }
 
 type syncRequest struct {
@@ -85,11 +90,19 @@ type cpuSample struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal("usage: nodemanage-agent <register|run|once|version>")
+		fatal("usage: nodemanage-agent <install|repair|upgrade|diagnose|uninstall|run|once|version>")
 	}
 	switch os.Args[1] {
-	case "register":
-		register(os.Args[2:])
+	case "install":
+		installCommand(os.Args[2:])
+	case "repair":
+		repairCommand(os.Args[2:])
+	case "upgrade":
+		upgradeCommand(os.Args[2:])
+	case "diagnose":
+		diagnoseCommand()
+	case "uninstall":
+		uninstallCommand(os.Args[2:])
 	case "run":
 		run(false)
 	case "once":
@@ -99,41 +112,6 @@ func main() {
 	default:
 		fatal("unknown command: " + os.Args[1])
 	}
-}
-
-func register(args []string) {
-	flags := flag.NewFlagSet("register", flag.ExitOnError)
-	server := flags.String("server", "", "management server URL")
-	code := flags.String("code", "", "enrollment code")
-	name := flags.String("name", "", "agent display name")
-	configPath := flags.String("config", defaultConfigPath, "agent configuration path")
-	_ = flags.Parse(args)
-	if *server == "" || *code == "" || *name == "" {
-		fatal("--server, --code and --name are required")
-	}
-	hostname, err := os.Hostname()
-	must(err)
-	body := map[string]string{"code": *code, "name": *name, "hostname": hostname, "architecture": runtime.GOARCH, "os": runtime.GOOS}
-	var response struct {
-		AgentID     string `json:"agent_id"`
-		AgentToken  string `json:"agent_token"`
-		PollSeconds int    `json:"poll_seconds"`
-	}
-	registrationClient := &http.Client{Timeout: 20 * time.Second}
-	must(postJSON(registrationClient, strings.TrimRight(*server, "/")+"/api/agent/register", "", body, &response))
-	if response.AgentID == "" || response.AgentToken == "" {
-		fatal("registration returned empty credentials")
-	}
-	cfg := config{
-		ServerURL: strings.TrimRight(*server, "/"), AgentID: response.AgentID, AgentToken: response.AgentToken,
-		PollSeconds: response.PollSeconds, SingBoxPath: "/usr/local/bin/sing-box", ServiceName: "sing-box.service",
-		RuntimePath: "/etc/sing-box/config.json", BackupPath: "/etc/sing-box/config.json.bak",
-	}
-	if cfg.PollSeconds < 15 {
-		cfg.PollSeconds = 60
-	}
-	must(writeJSONAtomic(*configPath, cfg, 0600))
-	fmt.Printf("registered agent %s\n", response.AgentID)
 }
 
 func run(once bool) {
@@ -164,6 +142,12 @@ func (a *agent) loadConfig() error {
 	if a.config.ServerURL == "" || a.config.AgentToken == "" {
 		return errors.New("agent configuration is incomplete")
 	}
+	if a.config.InitSystem == "" {
+		a.config.InitSystem = detectPlatform().InitSystem
+	}
+	if a.config.InstallMode == "" {
+		a.config.InstallMode = "system"
+	}
 	return nil
 }
 
@@ -174,7 +158,7 @@ func (a *agent) sync() error {
 	cpuUsage := a.cpuUsage()
 	request := syncRequest{
 		AgentVersion: version, SingBoxVersion: commandOutput(a.config.SingBoxPath, "version"), CurrentRevision: currentRevision,
-		SingBoxRunning: commandOK("systemctl", "is-active", "--quiet", a.config.ServiceName), UptimeSeconds: uptimeSeconds(),
+		SingBoxRunning: serviceActive(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service")), UptimeSeconds: uptimeSeconds(),
 		CPUUsagePercent:  cpuUsage,
 		MemoryTotalBytes: memoryTotal, MemoryUsedBytes: memoryUsed, DiskTotalBytes: diskTotal, DiskUsedBytes: diskUsed,
 		Permissions: collectPermissions(a.config),
@@ -240,46 +224,112 @@ func (a *agent) apply(revision int64, configJSON, expectedHash string) error {
 	if !strings.EqualFold(hex.EncodeToString(digest[:]), expectedHash) {
 		return errors.New("configuration checksum mismatch")
 	}
-	temporary := a.config.RuntimePath + ".new"
-	if err := os.WriteFile(temporary, []byte(configJSON), 0600); err != nil {
+	if err := ensureReleaseLayout(a.config.RuntimePath); err != nil {
+		return fmt.Errorf("prepare A/B releases: %w", err)
+	}
+	releasesRoot := "/etc/nodemanage/releases"
+	temporaryDir := filepath.Join(releasesRoot, fmt.Sprintf("r%d.tmp", revision))
+	releaseDir := filepath.Join(releasesRoot, fmt.Sprintf("r%d", revision))
+	if err := os.RemoveAll(temporaryDir); err != nil {
+		return fmt.Errorf("clean temporary release: %w", err)
+	}
+	if err := os.MkdirAll(temporaryDir, 0700); err != nil {
+		return fmt.Errorf("create temporary release: %w", err)
+	}
+	defer os.RemoveAll(temporaryDir)
+	temporaryConfig := filepath.Join(temporaryDir, "config.json")
+	if err := os.WriteFile(temporaryConfig, []byte(configJSON), 0600); err != nil {
 		return fmt.Errorf("write temporary config: %w", err)
 	}
-	defer os.Remove(temporary)
-	if output, err := exec.Command(a.config.SingBoxPath, "check", "-c", temporary).CombinedOutput(); err != nil {
+	if output, err := exec.Command(a.config.SingBoxPath, "check", "-c", temporaryConfig).CombinedOutput(); err != nil {
 		return fmt.Errorf("sing-box check: %s", strings.TrimSpace(string(output)))
 	}
-	oldConfig, readErr := os.ReadFile(a.config.RuntimePath)
-	if readErr == nil {
-		if err := os.WriteFile(a.config.BackupPath, oldConfig, 0600); err != nil {
-			return fmt.Errorf("backup current config: %w", err)
+	_ = os.RemoveAll(releaseDir)
+	if err := os.Rename(temporaryDir, releaseDir); err != nil {
+		return fmt.Errorf("finalize release: %w", err)
+	}
+	currentLink := "/etc/nodemanage/current"
+	previousLink := "/etc/nodemanage/previous"
+	oldTarget, _ := os.Readlink(currentLink)
+	if oldTarget != "" {
+		if err := atomicSymlink(oldTarget, previousLink); err != nil {
+			return fmt.Errorf("record previous release: %w", err)
 		}
 	}
-	if err := os.Rename(temporary, a.config.RuntimePath); err != nil {
-		return fmt.Errorf("activate config: %w", err)
+	if err := atomicSymlink(releaseDir, currentLink); err != nil {
+		return fmt.Errorf("activate release: %w", err)
 	}
-	if output, err := exec.Command("systemctl", "restart", a.config.ServiceName).CombinedOutput(); err != nil {
-		return a.rollback(fmt.Errorf("restart sing-box: %s", strings.TrimSpace(string(output))))
+	if err := restartService(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service")); err != nil {
+		return a.rollback(fmt.Errorf("restart sing-box: %w", err))
 	}
 	time.Sleep(800 * time.Millisecond)
-	if !commandOK("systemctl", "is-active", "--quiet", a.config.ServiceName) {
+	if !serviceActive(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service")) {
 		return a.rollback(errors.New("sing-box is not active after restart"))
 	}
 	return os.WriteFile(a.config.RuntimePath+".revision", []byte(strconv.FormatInt(revision, 10)+"\n"), 0600)
 }
 
 func (a *agent) rollback(reason error) error {
-	backup, err := os.ReadFile(a.config.BackupPath)
+	previous, err := os.Readlink("/etc/nodemanage/previous")
 	if err != nil {
 		return fmt.Errorf("%v; rollback unavailable: %w", reason, err)
 	}
-	if err := os.WriteFile(a.config.RuntimePath, backup, 0600); err != nil {
-		return fmt.Errorf("%v; rollback write failed: %w", reason, err)
+	if err := atomicSymlink(previous, "/etc/nodemanage/current"); err != nil {
+		return fmt.Errorf("%v; rollback switch failed: %w", reason, err)
 	}
-	output, restartErr := exec.Command("systemctl", "restart", a.config.ServiceName).CombinedOutput()
+	restartErr := restartService(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service"))
 	if restartErr != nil {
-		return fmt.Errorf("%v; rollback restart failed: %s", reason, strings.TrimSpace(string(output)))
+		return fmt.Errorf("%v; rollback restart failed: %w", reason, restartErr)
 	}
 	return fmt.Errorf("%v; previous configuration restored", reason)
+}
+
+func ensureReleaseLayout(runtimePath string) error {
+	root := "/etc/nodemanage"
+	currentLink := filepath.Join(root, "current")
+	if err := os.MkdirAll(filepath.Join(root, "releases"), 0700); err != nil {
+		return err
+	}
+	if _, err := os.Stat(currentLink); errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(currentLink); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		bootstrapDir := filepath.Join(root, "releases", "bootstrap")
+		if err := os.MkdirAll(bootstrapDir, 0700); err != nil {
+			return err
+		}
+		if data, readErr := os.ReadFile(runtimePath); readErr == nil {
+			if err := os.WriteFile(filepath.Join(bootstrapDir, "config.json"), data, 0600); err != nil {
+				return err
+			}
+		} else {
+			return readErr
+		}
+		if err := atomicSymlink(bootstrapDir, currentLink); err != nil {
+			return err
+		}
+	}
+	info, err := os.Lstat(runtimePath)
+	if err == nil && info.Mode()&os.ModeSymlink == 0 {
+		if err := os.Remove(runtimePath); err != nil {
+			return err
+		}
+	}
+	if _, err := os.Lstat(runtimePath); errors.Is(err, os.ErrNotExist) {
+		if err := os.Symlink(filepath.Join(currentLink, "config.json"), runtimePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func atomicSymlink(target, link string) error {
+	temporary := link + ".new"
+	_ = os.Remove(temporary)
+	if err := os.Symlink(target, temporary); err != nil {
+		return err
+	}
+	return os.Rename(temporary, link)
 }
 
 func collectPermissions(cfg config) permissions {
@@ -288,12 +338,20 @@ func collectPermissions(cfg config) permissions {
 	if current != nil {
 		username = current.Username
 	}
+	platform := detectPlatform()
 	return permissions{
 		User: username, UID: os.Getuid(), EUID: os.Geteuid(), GID: os.Getgid(), IsRoot: os.Geteuid() == 0,
 		EffectiveCapsHex: effectiveCapabilities(), ConfigReadable: canOpen(cfg.RuntimePath, os.O_RDONLY),
 		ConfigWritable: canOpen(cfg.RuntimePath, os.O_WRONLY), SingBoxExecutable: commandOK(cfg.SingBoxPath, "version"),
-		ServiceControl: os.Geteuid() == 0 && commandOK("systemctl", "show", "--property=LoadState", "--value", cfg.ServiceName),
+		ServiceControl: os.Geteuid() == 0 && (platform.InitSystem == "systemd" || platform.InitSystem == "openrc"),
+		Distribution:   platform.Distribution, DistributionVersion: platform.DistributionVersion, Libc: platform.Libc,
+		InitSystem: platform.InitSystem, InstallMode: platform.InstallMode, BindLowPort: os.Geteuid() == 0 || hasBindLowPortCapability(),
 	}
+}
+
+func hasBindLowPortCapability() bool {
+	value, err := strconv.ParseUint(effectiveCapabilities(), 16, 64)
+	return err == nil && value&(1<<10) != 0
 }
 
 func effectiveCapabilities() string {

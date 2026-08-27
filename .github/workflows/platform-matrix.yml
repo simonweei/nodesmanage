@@ -1,0 +1,62 @@
+name: Platform compatibility
+
+on:
+  push:
+    paths: ["agent/**", "scripts/**", ".github/workflows/platform-matrix.yml"]
+  pull_request:
+    paths: ["agent/**", "scripts/**", ".github/workflows/platform-matrix.yml"]
+
+jobs:
+  linux-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:24.04
+            distro: ubuntu
+            arch: amd64
+          - image: debian:12
+            distro: debian
+            arch: amd64
+          - image: rockylinux:9
+            distro: rocky
+            arch: amd64
+          - image: alpine:3.21
+            distro: alpine
+            arch: amd64
+          - image: ubuntu:24.04
+            distro: ubuntu
+            arch: arm64
+          - image: debian:12
+            distro: debian
+            arch: arm64
+          - image: rockylinux:9
+            distro: rocky
+            arch: arm64
+          - image: alpine:3.21
+            distro: alpine
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - uses: docker/setup-qemu-action@v3
+        if: matrix.arch == 'arm64'
+        with:
+          platforms: arm64
+      - name: Test Agent
+        working-directory: agent
+        run: go test ./...
+      - name: Build static probe
+        working-directory: agent
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} go build -trimpath -o ../nodemanage-agent-${{ matrix.arch }} .
+      - name: Probe ${{ matrix.image }} on ${{ matrix.arch }}
+        run: |
+          docker run --rm --platform "linux/${{ matrix.arch }}" -v "$PWD/nodemanage-agent-${{ matrix.arch }}:/usr/local/bin/nodemanage-agent:ro" "${{ matrix.image }}" sh -c '
+            /usr/local/bin/nodemanage-agent diagnose > /tmp/diagnose.json
+            cat /tmp/diagnose.json
+            grep -q "\"distribution\": \"${{ matrix.distro }}\"" /tmp/diagnose.json
+            grep -q "\"architecture\": \"${{ matrix.arch }}\"" /tmp/diagnose.json
+          '
