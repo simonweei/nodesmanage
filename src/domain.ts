@@ -42,6 +42,12 @@ export interface NodeRecord {
   address: string;
   type: ProfileType;
   settings_json: string;
+  protocols_json?: string | null;
+}
+
+export interface ProtocolProfile {
+  type: ProfileType;
+  settings: ProfileSettings;
 }
 
 function object(input: unknown): Record<string, unknown> {
@@ -158,4 +164,11 @@ export function compileServerConfig(type: ProfileType, settings: ProfileSettings
       break;
   }
   return { log: { level: "info", timestamp: true }, inbounds: [inbound], outbounds: [{ type: "direct", tag: "direct" }, { type: "block", tag: "block" }] };
+}
+
+export function compileServerProfiles(profiles: ProtocolProfile[], clients: ClientRecord[]): Record<string, unknown> {
+  const inbounds = profiles.flatMap(({ type, settings }) =>
+    compileServerConfig(type, settings, clients).inbounds as Record<string, unknown>[],
+  );
+  return { log: { level: "info", timestamp: true }, inbounds, outbounds: [{ type: "direct", tag: "direct" }, { type: "block", tag: "block" }] };
 }

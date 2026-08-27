@@ -1,7 +1,10 @@
 import type { ClientRecord, NodeRecord, ProfileSettings } from "./domain";
 
 interface ExpandedNode extends NodeRecord { settings: ProfileSettings }
-const expand = (nodes: NodeRecord[]): ExpandedNode[] => nodes.map((node) => ({ ...node, settings: JSON.parse(node.settings_json) as ProfileSettings }));
+const expand = (nodes: NodeRecord[]): ExpandedNode[] => nodes.flatMap((node) => {
+  const profiles = node.protocols_json ? JSON.parse(node.protocols_json) as { type: NodeRecord["type"]; settings: ProfileSettings }[] : [{ type: node.type, settings: JSON.parse(node.settings_json) as ProfileSettings }];
+  return profiles.map((profile) => ({ ...node, type: profile.type, settings: profile.settings }));
+});
 const uriHost = (address: string): string => address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
 const yaml = (value: string): string => JSON.stringify(value);
 const tag = (node: ExpandedNode): string => `${node.name} · ${node.type}`;

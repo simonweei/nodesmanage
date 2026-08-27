@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
-import { compileServerConfig, parseProfileSettings, type ProfileSettings, type ProfileType } from "../src/domain";
+import { compileServerConfig, compileServerProfiles, parseProfileSettings, type ProfileSettings, type ProfileType } from "../src/domain";
 import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src/subscriptions";
 
 const client = {
@@ -46,6 +46,16 @@ describe("subscriptions", () => {
     expect((JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { type: string }).type).toBe(protocol);
     expect(mihomoSubscription(client, [node])).toContain("proxies:");
     expect(uriSubscription(client, [node])).toContain("node.example.com");
+  });
+});
+
+describe("multiple protocols on one VPS", () => {
+  it("compiles every selected protocol and expands them in subscriptions", () => {
+    const profiles = cases.slice(0, 3).map(([type, settings]) => ({ type, settings }));
+    expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(3);
+    const node = { id: "multi", name: "Tokyo", address: "node.example.com", type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
+    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(3);
+    expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(3);
   });
 });
 
