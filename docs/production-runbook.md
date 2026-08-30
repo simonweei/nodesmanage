@@ -52,6 +52,7 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 ## 故障处理
 
 - Agent 离线：在 VPS 执行 `nodemanage-agent diagnose`，检查服务、DNS、系统时间和到 Worker HTTPS 的出站访问；随后执行 `nodemanage-agent repair`。
+- standalone 环境离线：检查 `/etc/nodemanage/nodemanage-agent.log`、`/etc/nodemanage/sing-box.log` 和对应 `.pid` 文件。受管容器重建后不会自动恢复进程，重新执行安装命令或 `nodemanage-agent repair`；长期生产节点应迁移到带 systemd/OpenRC 的 VPS。
 - 配置失败：面板查看错误及安装事件。Agent 会在 `sing-box check` 或重启失败时回滚到 previous；修正 Profile 后保存会自动生成新修订。
 - 配置发布中断：变更与 `reconcile_queue` 在同一个 D1 事务写入，Cron 会重试；也可在面板点击“发布”立即重试。
 - TLS/ACME 失败：确认域名 A/AAAA 记录确实指向当前 VPS、TCP 80 入站可达、系统时间正确，并检查 `/etc/nodemanage/acme` 可写。Hysteria2/TUIC 使用 UDP，Cloudflare 普通代理不能转发该流量，记录必须为 DNS only。WebSocket/gRPC 走 Cloudflare 时还需确认端口在代理支持范围内，gRPC 已在域名网络设置中启用。

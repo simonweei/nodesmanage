@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -75,6 +76,42 @@ func TestUserConfigRejectsPrivilegedPorts(t *testing.T) {
 	}
 	if err := validateUserPorts([]byte(`{"inbounds":[{"listen_port":8443}]}`)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStandaloneProcessLifecycle(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("standalone process control is Linux-only")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfg"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	layout, err := layoutForMode("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(layout.BinDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	program := []byte("#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n")
+	for _, path := range []string{layout.AgentPath, layout.SingBoxPath} {
+		if err := os.WriteFile(path, program, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := restartStandalone("user", "sing-box"); err != nil {
+		t.Fatal(err)
+	}
+	defer stopStandalone("user", "sing-box")
+	if !standaloneActive("user", "sing-box") {
+		t.Fatal("standalone sing-box process is not active")
+	}
+	if err := stopStandalone("user", "sing-box"); err != nil {
+		t.Fatal(err)
+	}
+	if standaloneActive("user", "sing-box") {
+		t.Fatal("standalone sing-box process remained active")
 	}
 }
 

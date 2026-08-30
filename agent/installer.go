@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -112,13 +113,17 @@ func installCommand(args []string) {
 	}
 	platform := detectPlatform()
 	platform.InstallMode = mode
-	if mode == "user" && (platform.InitSystem != "systemd" || !userSystemdAvailable()) {
+	if mode == "user" && platform.InitSystem == "systemd" && !userSystemdAvailable() {
 		reporter.report("failed", "NM-E203", "user mode requires an active systemd user manager", "local")
 		fatal("[NM-E203] user mode requires systemctl --user; ask the administrator to enable lingering or keep a user session active")
 	}
-	if mode == "system" && platform.InitSystem != "systemd" && platform.InitSystem != "openrc" {
+	if mode == "user" && platform.InitSystem != "systemd" && platform.InitSystem != "standalone" {
+		reporter.report("failed", "NM-E203", "supported process manager not found", "local")
+		fatal("[NM-E203] supported process manager not found")
+	}
+	if mode == "system" && platform.InitSystem != "systemd" && platform.InitSystem != "openrc" && platform.InitSystem != "standalone" {
 		reporter.report("failed", "NM-E203", "supported init system not found", "local")
-		fatal("[NM-E203] supported init system not found (systemd or OpenRC required)")
+		fatal("[NM-E203] supported init system not found")
 	}
 	reporter.report("bootstrap_started", "", "Agent bootstrap started", "worker-assets")
 	var manifest releaseManifest
@@ -224,10 +229,10 @@ func repairCommand(args []string) {
 	reporter := installReporter{client: &http.Client{Timeout: 5 * time.Second}, server: cfg.ServerURL, token: cfg.AgentToken, logPath: layout.LogPath}
 	platform := detectPlatform()
 	platform.InstallMode = cfg.InstallMode
-	if cfg.InstallMode == "user" && (platform.InitSystem != "systemd" || !userSystemdAvailable()) {
+	if cfg.InstallMode == "user" && platform.InitSystem == "systemd" && !userSystemdAvailable() {
 		fatal("[NM-E203] user mode requires an active systemd user manager")
 	}
-	if cfg.InstallMode == "system" && platform.InitSystem != "systemd" && platform.InitSystem != "openrc" {
+	if cfg.InstallMode == "system" && platform.InitSystem != "systemd" && platform.InitSystem != "openrc" && platform.InitSystem != "standalone" {
 		reporter.report("failed", "NM-E203", "supported init system not found", "local")
 		fatal("[NM-E203] supported init system not found")
 	}
@@ -726,7 +731,7 @@ func getJSON(client *http.Client, url string, output any) error {
 
 func detectPlatform() platformInfo {
 	values := parseOSRelease("/etc/os-release")
-	initSystem := "unknown"
+	initSystem := "standalone"
 	if _, err := os.Stat("/run/systemd/system"); err == nil {
 		initSystem = "systemd"
 	} else if _, err := exec.LookPath("rc-service"); err == nil {
@@ -774,6 +779,9 @@ func systemdQuote(path string) string {
 }
 
 func writeServices(initSystem string, layout installLayout) error {
+	if initSystem == "standalone" {
+		return os.MkdirAll(layout.StateRoot, 0700)
+	}
 	if initSystem == "systemd" {
 		wantedBy := "multi-user.target"
 		capabilities := "AmbientCapabilities=CAP_NET_BIND_SERVICE\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\n"
@@ -816,6 +824,9 @@ func userSystemdAvailable() bool {
 }
 
 func serviceControlAvailable(initSystem, mode string) bool {
+	if initSystem == "standalone" {
+		return true
+	}
 	if initSystem == "systemd" {
 		if mode == "user" {
 			return userSystemdAvailable()
@@ -826,6 +837,16 @@ func serviceControlAvailable(initSystem, mode string) bool {
 }
 
 func enableServices(initSystem, mode string) error {
+	if initSystem == "standalone" {
+		if err := restartStandalone(mode, "sing-box"); err != nil {
+			return fmt.Errorf("start sing-box: %w", err)
+		}
+		if err := restartStandalone(mode, "nodemanage-agent"); err != nil {
+			_ = stopStandalone(mode, "sing-box")
+			return fmt.Errorf("start Agent: %w", err)
+		}
+		return nil
+	}
 	if initSystem == "systemd" {
 		if output, err := systemctl(mode, "daemon-reload").CombinedOutput(); err != nil {
 			return fmt.Errorf("daemon-reload: %s", output)
@@ -848,6 +869,11 @@ func enableServices(initSystem, mode string) error {
 }
 
 func disableServices(initSystem, mode string) {
+	if initSystem == "standalone" {
+		_ = stopStandalone(mode, "nodemanage-agent")
+		_ = stopStandalone(mode, "sing-box")
+		return
+	}
 	if initSystem == "systemd" {
 		_ = systemctl(mode, "disable", "--now", "nodemanage-agent.service", "sing-box.service").Run()
 		_ = systemctl(mode, "daemon-reload").Run()
@@ -861,6 +887,9 @@ func disableServices(initSystem, mode string) {
 }
 
 func serviceActive(initSystem, mode, name string) bool {
+	if initSystem == "standalone" {
+		return standaloneActive(mode, name)
+	}
 	if initSystem == "systemd" {
 		return systemctl(mode, "is-active", "--quiet", name+".service").Run() == nil
 	}
@@ -871,6 +900,9 @@ func serviceActive(initSystem, mode, name string) bool {
 }
 
 func restartService(initSystem, mode, name string) error {
+	if initSystem == "standalone" {
+		return restartStandalone(mode, name)
+	}
 	if initSystem == "systemd" {
 		return systemctl(mode, "restart", name+".service").Run()
 	}
@@ -878,6 +910,112 @@ func restartService(initSystem, mode, name string) error {
 		return exec.Command("rc-service", name, "restart").Run()
 	}
 	return errors.New("unsupported init system")
+}
+
+func standaloneSpec(mode, name string) (installLayout, string, []string, error) {
+	layout, err := layoutForMode(mode)
+	if err != nil {
+		return installLayout{}, "", nil, err
+	}
+	switch name {
+	case "sing-box":
+		return layout, layout.SingBoxPath, []string{"run", "-c", layout.RuntimeConfig}, nil
+	case "nodemanage-agent":
+		return layout, layout.AgentPath, []string{"run", "--config", layout.AgentConfig}, nil
+	default:
+		return installLayout{}, "", nil, fmt.Errorf("unsupported standalone service %q", name)
+	}
+}
+
+func standalonePIDPath(layout installLayout, name string) string {
+	return filepath.Join(layout.StateRoot, name+".pid")
+}
+
+func standaloneActive(mode, name string) bool {
+	layout, executable, _, err := standaloneSpec(mode, name)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(standalonePIDPath(layout, name))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 1 || !processExists(pid) {
+		return false
+	}
+	commandLine, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	return err == nil && strings.Contains(string(commandLine), executable)
+}
+
+func stopStandalone(mode, name string) error {
+	layout, _, _, err := standaloneSpec(mode, name)
+	if err != nil {
+		return err
+	}
+	pidPath := standalonePIDPath(layout, name)
+	data, readErr := os.ReadFile(pidPath)
+	if readErr != nil {
+		if errors.Is(readErr, os.ErrNotExist) {
+			return nil
+		}
+		return readErr
+	}
+	pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+	if parseErr != nil || pid <= 1 {
+		_ = os.Remove(pidPath)
+		return nil
+	}
+	if standaloneActive(mode, name) {
+		_ = signalProcess(pid, false)
+		for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+			if !processExists(pid) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if processExists(pid) {
+			_ = signalProcess(pid, true)
+		}
+	}
+	return os.Remove(pidPath)
+}
+
+func restartStandalone(mode, name string) error {
+	if err := stopStandalone(mode, name); err != nil {
+		return err
+	}
+	layout, executable, args, err := standaloneSpec(mode, name)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(layout.StateRoot, 0700); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(filepath.Join(layout.StateRoot, name+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer logFile.Close()
+	command := exec.Command(executable, args...)
+	command.Stdout = logFile
+	command.Stderr = logFile
+	command.Stdin = nil
+	prepareDetached(command)
+	if err := command.Start(); err != nil {
+		return err
+	}
+	pid := command.Process.Pid
+	if err := os.WriteFile(standalonePIDPath(layout, name), []byte(strconv.Itoa(pid)+"\n"), 0600); err != nil {
+		_ = command.Process.Kill()
+		return err
+	}
+	_ = command.Process.Release()
+	time.Sleep(200 * time.Millisecond)
+	if !standaloneActive(mode, name) {
+		return fmt.Errorf("%s exited during startup; inspect %s", name, filepath.Join(layout.StateRoot, name+".log"))
+	}
+	return nil
 }
 
 func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }
