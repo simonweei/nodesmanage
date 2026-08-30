@@ -1,5 +1,5 @@
 import { handleApi, reconcilePending } from "./api";
-import { handleAdminAuth, hasAdminSession } from "./auth";
+import { handleAdminAuth, hasAdminSession, MIN_ADMIN_PASSWORD_LENGTH } from "./auth";
 import { HttpError, json } from "./http";
 import { installScript } from "./install";
 import { installManifest } from "./releases";
@@ -10,7 +10,7 @@ export default {
     try {
       if (url.pathname === "/healthz") {
         await env.DB.prepare("SELECT 1").first();
-        const configured = typeof env.ADMIN_PASSWORD === "string" && env.ADMIN_PASSWORD.length >= 12 && typeof env.AGENT_TOKEN_SECRET === "string" && env.AGENT_TOKEN_SECRET.length >= 32;
+        const configured = typeof env.ADMIN_PASSWORD === "string" && env.ADMIN_PASSWORD.length >= MIN_ADMIN_PASSWORD_LENGTH && typeof env.AGENT_TOKEN_SECRET === "string" && env.AGENT_TOKEN_SECRET.length >= 32;
         return json({ ok: configured, database: "ready", secrets: configured ? "ready" : "invalid" }, { status: configured ? 200 : 503 });
       }
       if (url.pathname === "/install.sh" && request.method === "GET") return installScript(url.origin);

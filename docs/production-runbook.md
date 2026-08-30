@@ -5,7 +5,7 @@
 1. 执行 `npm ci`、`npm run check`、`cd agent && go test ./...`。
 2. Agent 有改动时执行 `powershell -File scripts/build-agent.ps1`（Linux/macOS 使用 `scripts/build-agent.sh`），并提交二进制、`SHA256SUMS`、稳定清单和生成的 TypeScript 摘要。
 3. 执行 `npm run db:remote`；只允许 Wrangler 写入 `d1_migrations`，不要在控制台手工插入迁移记录。
-4. 确认 `ADMIN_PASSWORD` 至少 12 个字符，`AGENT_TOKEN_SECRET` 是独立的至少 32 字符随机 Secret。
+4. 确认 `ADMIN_PASSWORD` 至少 6 个字符，`AGENT_TOKEN_SECRET` 是独立的至少 32 字符随机 Secret。生产环境仍建议使用更长的随机管理密码，并保留登录限流和 Cloudflare Access。
 5. 执行 `npm run deploy`，随后请求 `/healthz`，必须返回 HTTP 200 且 database/secrets 均为 ready。
 
 数据库迁移必须先于包含新 SQL 的 Worker 发布。当前数据库是全新架构，只有 `0001_current_schema.sql`；后续已经进入生产后，只能新增迁移，禁止修改已经应用的迁移文件。

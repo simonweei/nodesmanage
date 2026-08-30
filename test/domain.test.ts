@@ -89,14 +89,14 @@ describe("admin authentication boundary", () => {
     }), authEnv)).rejects.toThrow("admin login required");
   });
 
-  it("accepts twelve-character secrets and rejects shorter configuration", async () => {
-    const twelveCharacterEnv = { ADMIN_PASSWORD: "abc123456789", LOGIN_RATE_LIMITER: allow };
+  it("accepts six-character passwords and rejects shorter configuration", async () => {
+    const sixCharacterEnv = { ADMIN_PASSWORD: "abc123", LOGIN_RATE_LIMITER: allow };
     await expect(handleAdminAuth(new Request("https://manage.example.com/api/auth/login", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "abc123456789" }),
-    }), twelveCharacterEnv)).resolves.toMatchObject({ status: 200 });
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "abc123" }),
+    }), sixCharacterEnv)).resolves.toMatchObject({ status: 200 });
     await expect(handleAdminAuth(new Request("https://manage.example.com/api/auth/login", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "abc12345678" }),
-    }), { ADMIN_PASSWORD: "abc12345678", LOGIN_RATE_LIMITER: allow })).rejects.toThrow("at least 12 characters");
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "abc12" }),
+    }), { ADMIN_PASSWORD: "abc12", LOGIN_RATE_LIMITER: allow })).rejects.toThrow("at least 6 characters");
   });
 
   it("returns 429 when the login limiter denies the request", async () => {
