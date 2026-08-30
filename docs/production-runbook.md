@@ -54,6 +54,7 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 - Agent 离线：在 VPS 执行 `nodemanage-agent diagnose`，检查服务、DNS、系统时间和到 Worker HTTPS 的出站访问；随后执行 `nodemanage-agent repair`。
 - 配置失败：面板查看错误及安装事件。Agent 会在 `sing-box check` 或重启失败时回滚到 previous；修正 Profile 后保存会自动生成新修订。
 - 配置发布中断：变更与 `reconcile_queue` 在同一个 D1 事务写入，Cron 会重试；也可在面板点击“发布”立即重试。
+- TLS/ACME 失败：确认域名 A/AAAA 记录确实指向当前 VPS、TCP 80 入站可达、系统时间正确，并检查 `/etc/nodemanage/acme` 可写。Hysteria2/TUIC 使用 UDP，Cloudflare 普通代理不能转发该流量，记录必须为 DNS only。WebSocket/gRPC 走 Cloudflare 时还需确认端口在代理支持范围内，gRPC 已在域名网络设置中启用。
 - 订阅泄露：在订阅管理中轮换 Token；旧 Token 立即失效。删除客户端/订阅也会立即撤销 Token 并自动发布 VPS 用户列表。
 - VPS 下线：先“安全退役”，等待空用户配置应用后再次删除；只有机器已经不可访问且明确接受残留配置风险时才强制删除。
 - Worker 回滚：回滚 Worker 代码不能自动回滚数据库。新迁移若不向后兼容，应使用 Time Travel 或经过验证的前向修复迁移。
@@ -61,6 +62,6 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 ## 容量和安全边界
 
 - 单控制面最多 200 台 VPS、200 个订阅组；单次订阅最多 8 台 VPS、10 个初始客户端。
-- 生产协议仅支持 VLESS Reality + Vision 和 Shadowsocks AEAD 2022，减少证书、UDP、内核和发行版差异带来的故障面。
+- 生产协议支持 VLESS Reality + Vision、Shadowsocks AEAD 2022、VLESS TLS + WebSocket、VLESS TLS + gRPC、Hysteria2、TUIC 和 Trojan TLS。TLS/ACME 协议仅允许 system/root，且每台 VPS 最多一个；上线前必须验证 TCP 80、目标 TCP/UDP 端口、DNS 和证书续期。
 - 控制面不执行远程 Shell，不下发任意命令。Agent 只接受声明式 sing-box 配置和固定、带 SHA-256 的发布清单。
 - 管理登录和公共 Agent/订阅接口分别使用 Cloudflare Rate Limiting binding。真正的管理域名还应启用 Cloudflare Access 或等价的身份边界。

@@ -2,9 +2,15 @@ import { randomBase64, realityKeypair } from "./crypto";
 import { HttpError } from "./http";
 
 export const PROFILE_TYPES = [
-  "vless-reality-vision", "shadowsocks-aead",
+  "vless-reality-vision", "shadowsocks-aead", "vless-tls-websocket", "vless-tls-grpc",
+  "hysteria2", "tuic", "trojan-tls",
 ] as const;
 export type ProfileType = typeof PROFILE_TYPES[number];
+
+export const ACME_PROFILE_TYPES = [
+  "vless-tls-websocket", "vless-tls-grpc", "hysteria2", "tuic", "trojan-tls",
+] as const satisfies readonly ProfileType[];
+export type AcmeProfileType = typeof ACME_PROFILE_TYPES[number];
 
 export interface ProfileSettings {
   listen_port: number;
@@ -16,6 +22,13 @@ export interface ProfileSettings {
   reality_handshake_port?: number;
   shadowsocks_method?: "2022-blake3-aes-128-gcm";
   shadowsocks_server_password?: string;
+  server_address?: string;
+  tls_server_name?: string;
+  acme_email?: string;
+  websocket_path?: string;
+  websocket_host?: string;
+  grpc_service_name?: string;
+  hysteria2_obfs_password?: string;
 }
 
 export interface ClientRecord {
@@ -54,6 +67,32 @@ function port(value: unknown, key = "listen_port"): number {
   return value;
 }
 
+function hostname(value: unknown, key: string): string {
+  const result = string(value, key, 253).toLowerCase();
+  if (!/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(result)) {
+    throw new HttpError(400, `${key} must be a valid domain name`);
+  }
+  return result;
+}
+
+function acmeSettings(value: Record<string, unknown>, result: ProfileSettings): void {
+  result.tls_server_name = hostname(value.tls_server_name, "tls_server_name");
+  result.server_address = hostname(value.server_address ?? value.tls_server_name, "server_address");
+  const email = string(value.acme_email, "acme_email", 254).toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new HttpError(400, "acme_email must be a valid email address");
+  result.acme_email = email;
+}
+
+export function isAcmeProfile(type: ProfileType): type is AcmeProfileType {
+  return (ACME_PROFILE_TYPES as readonly ProfileType[]).includes(type);
+}
+
+export function profileNetworks(type: ProfileType): readonly ("tcp" | "udp")[] {
+  if (type === "hysteria2" || type === "tuic") return ["udp"];
+  if (type === "shadowsocks-aead") return ["tcp", "udp"];
+  return ["tcp"];
+}
+
 export function parseProfileType(value: unknown): ProfileType {
   if (!PROFILE_TYPES.includes(value as ProfileType)) throw new HttpError(400, "unsupported profile type");
   return value as ProfileType;
@@ -80,6 +119,22 @@ export function parseProfileSettings(type: ProfileType, input: unknown): Profile
     result.shadowsocks_server_password = string(value.shadowsocks_server_password, "shadowsocks_server_password", 128);
     return result;
   }
+  if (isAcmeProfile(type)) {
+    acmeSettings(value, result);
+    if (type === "vless-tls-websocket") {
+      const path = string(value.websocket_path, "websocket_path", 256);
+      if (!path.startsWith("/") || /[?#]/.test(path)) throw new HttpError(400, "websocket_path must start with / and cannot contain ? or #");
+      result.websocket_path = path;
+      result.websocket_host = hostname(value.websocket_host ?? value.tls_server_name, "websocket_host");
+    } else if (type === "vless-tls-grpc") {
+      const serviceName = string(value.grpc_service_name, "grpc_service_name", 128);
+      if (!/^[A-Za-z0-9._-]+$/.test(serviceName)) throw new HttpError(400, "grpc_service_name is invalid");
+      result.grpc_service_name = serviceName;
+    } else if (type === "hysteria2") {
+      result.hysteria2_obfs_password = string(value.hysteria2_obfs_password, "hysteria2_obfs_password", 128);
+    }
+    return result;
+  }
   throw new HttpError(400, "unsupported profile type");
 }
 
@@ -93,7 +148,31 @@ export async function profileDefaults(type: ProfileType, deploymentMode: "system
     };
   }
   if (type === "shadowsocks-aead") return { listen_port: 8388, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: randomBase64(16) };
+  if (isAcmeProfile(type)) {
+    const common = { server_address: "", tls_server_name: "", acme_email: "" };
+    if (type === "vless-tls-websocket") return { listen_port: 8443, ...common, websocket_path: "/proxy", websocket_host: common.tls_server_name };
+    if (type === "vless-tls-grpc") return { listen_port: 443, ...common, grpc_service_name: "NodeManage" };
+    if (type === "hysteria2") return { listen_port: 8443, ...common, hysteria2_obfs_password: randomBase64(24) };
+    if (type === "tuic") return { listen_port: 10443, ...common };
+    return { listen_port: 9443, ...common };
+  }
   throw new HttpError(400, "unsupported profile type");
+}
+
+function managedTls(settings: ProfileSettings, alpn?: string[]): Record<string, unknown> {
+  return {
+    enabled: true,
+    server_name: settings.tls_server_name,
+    ...(alpn ? { alpn } : {}),
+    acme: {
+      domain: [settings.tls_server_name],
+      data_directory: "/etc/nodemanage/acme",
+      default_server_name: settings.tls_server_name,
+      email: settings.acme_email,
+      provider: "letsencrypt",
+      disable_tls_alpn_challenge: true,
+    },
+  };
 }
 
 export function compileServerConfig(type: ProfileType, settings: ProfileSettings, clients: ClientRecord[]): Record<string, unknown> {
@@ -104,7 +183,22 @@ export function compileServerConfig(type: ProfileType, settings: ProfileSettings
       inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid, flow: "xtls-rprx-vision" })), tls: { enabled: true, server_name: settings.server_name, reality: { enabled: true, handshake: { server: settings.reality_handshake_server, server_port: settings.reality_handshake_port }, private_key: settings.reality_private_key, short_id: [settings.reality_short_id] } } };
       break;
     case "shadowsocks-aead":
-      inbound = { ...base, type: "shadowsocks", network: "tcp", method: settings.shadowsocks_method, password: settings.shadowsocks_server_password, users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), multiplex: { enabled: true } };
+      inbound = { ...base, type: "shadowsocks", method: settings.shadowsocks_method, password: settings.shadowsocks_server_password, users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), multiplex: { enabled: true } };
+      break;
+    case "vless-tls-websocket":
+      inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid })), tls: managedTls(settings), transport: { type: "ws", path: settings.websocket_path, headers: { Host: settings.websocket_host } } };
+      break;
+    case "vless-tls-grpc":
+      inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid })), tls: managedTls(settings, ["h2"]), transport: { type: "grpc", service_name: settings.grpc_service_name } };
+      break;
+    case "hysteria2":
+      inbound = { ...base, type: "hysteria2", users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), obfs: { type: "salamander", password: settings.hysteria2_obfs_password }, tls: managedTls(settings) };
+      break;
+    case "tuic":
+      inbound = { ...base, type: "tuic", users: clients.map((c) => ({ name: c.name, uuid: c.uuid, password: c.shadowsocks_password })), congestion_control: "bbr", zero_rtt_handshake: false, tls: managedTls(settings) };
+      break;
+    case "trojan-tls":
+      inbound = { ...base, type: "trojan", users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), tls: managedTls(settings), multiplex: { enabled: true } };
       break;
   }
   return { log: { level: "info", timestamp: true }, inbounds: [inbound], outbounds: [{ type: "direct", tag: "direct" }, { type: "block", tag: "block" }] };

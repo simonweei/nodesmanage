@@ -1,6 +1,6 @@
 import { requireAdmin, requireAgent } from "./auth";
 import { hmacHex, randomBase64, randomToken, randomUuid, sha256Hex } from "./crypto";
-import { compileServerProfiles, parseProfileSettings, parseProfileType, profileDefaults, type ClientRecord, type NodeRecord, type ProfileType, type ProtocolProfile } from "./domain";
+import { compileServerProfiles, isAcmeProfile, parseProfileSettings, parseProfileType, profileDefaults, profileNetworks, type ClientRecord, type NodeRecord, type ProfileType, type ProtocolProfile } from "./domain";
 import { booleanField, HttpError, json, numberField, readJsonObject, stringField } from "./http";
 import { mihomoSubscription, singBoxSubscription, uriSubscription } from "./subscriptions";
 
@@ -89,6 +89,22 @@ function validateDeploymentPorts(mode: "system" | "user", profiles: ProtocolProf
   if (mode === "user" && profiles.some((profile) => profile.settings.listen_port <= 1024)) {
     throw new HttpError(400, "非 root 用户级部署只能使用 1025-65535 端口");
   }
+  if (mode === "user" && profiles.some((profile) => isAcmeProfile(profile.type))) {
+    throw new HttpError(400, "TLS/ACME 协议需要监听 80 端口完成证书签发，仅支持 system/root 部署");
+  }
+  if (profiles.filter((profile) => isAcmeProfile(profile.type)).length > 1) {
+    throw new HttpError(400, "每台 VPS 最多启用一个 TLS/ACME 协议，避免证书挑战监听器冲突");
+  }
+  for (let i = 0; i < profiles.length; i++) {
+    for (let j = i + 1; j < profiles.length; j++) {
+      const left = profiles[i];
+      const right = profiles[j];
+      if (!left || !right || left.settings.listen_port !== right.settings.listen_port) continue;
+      if (profileNetworks(left.type).some((network) => profileNetworks(right.type).includes(network))) {
+        throw new HttpError(400, "同一传输层上的协议必须使用不同监听端口");
+      }
+    }
+  }
 }
 
 async function submittedProtocols(body: Record<string, unknown>, mode: "system" | "user"): Promise<ProtocolProfile[]> {
@@ -104,12 +120,7 @@ async function submittedProtocols(body: Record<string, unknown>, mode: "system" 
     if (types.has(type)) throw new HttpError(400, "protocols cannot contain duplicates");
     types.add(type);
     const submitted = value.settings && typeof value.settings === "object" && !Array.isArray(value.settings) ? value.settings as Record<string, unknown> : {};
-    profiles.push({ type, settings: parseProfileSettings(type, { ...(await profileDefaults(type)), ...submitted }) });
-  }
-  const ports = new Set<number>();
-  for (const profile of profiles) {
-    if (ports.has(profile.settings.listen_port)) throw new HttpError(400, "每个协议必须使用不同的监听端口");
-    ports.add(profile.settings.listen_port);
+    profiles.push({ type, settings: parseProfileSettings(type, { ...(await profileDefaults(type, mode)), ...submitted }) });
   }
   validateDeploymentPorts(mode, profiles);
   return profiles;

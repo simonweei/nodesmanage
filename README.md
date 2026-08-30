@@ -65,7 +65,7 @@ AGENT_TOKEN_SECRET="至少三十二位的独立随机值"
 
 管理界面只有 **VPS** 和 **订阅** 两个主版块，桌面端使用紧凑表格，移动端自动切换为卡片和全屏编辑抽屉。
 
-1. 在 VPS 列表点击“创建 VPS”，选择协议组合并确认少量必要参数。Reality 密钥、Short ID 和 Shadowsocks 主密码均由 Worker 自动生成。
+1. 在 VPS 列表点击“创建 VPS”，选择协议组合并确认少量必要参数。Reality 密钥、Short ID、Shadowsocks 主密码和 Hysteria2 混淆密码均由 Worker 自动生成。
 2. 创建 VPS 时选择系统级或用户级部署，再复制一次性安装命令并在 15 分钟内执行。票据成功注册后立即失效，重新生成也会使旧票据失效。
    Bootstrap 只依赖基础 POSIX shell、`curl`/`wget`/BusyBox 之一以及任一常见 SHA-256 工具；它只下载并校验 Agent。
    Agent 根据系统环境安装固定版本的 sing-box 1.13.12，所有二进制均使用固定 SHA-256 摘要验证，并配置 systemd 或 OpenRC 服务。
@@ -88,7 +88,21 @@ curl -fsSL https://管理域名/install.sh | sh -s -- --ticket 一次性票据 -
 
 用户级部署要求 systemd 用户管理器可用。若 VPS 没有持续登录会话，管理员需执行 `loginctl enable-linger 用户名`；这一步属于系统策略，Agent 不会自行提权修改。OpenRC 当前仅支持系统级部署。
 
-生产版只支持 VLESS Reality + Vision 和 Shadowsocks AEAD 2022。Shadowsocks 固定使用 `2022-blake3-aes-128-gcm` 多用户模式。移除普通 TLS、QUIC/UDP 和旧兼容路径，目的是让基础 Linux、受限网络和不同发行版上的部署链路更容易闭环验证。
+生产协议包括：
+
+| 协议 | 传输 | 部署模式 | 域名要求 |
+| --- | --- | --- | --- |
+| VLESS Reality + Vision | TCP | system / user | 不需要证书域名 |
+| Shadowsocks AEAD 2022 | TCP + UDP | system / user | 不需要域名 |
+| VLESS TLS + WebSocket | TCP | system/root | ACME 域名；可使用 Cloudflare 代理 |
+| VLESS TLS + gRPC | TCP | system/root | ACME 域名；使用 Cloudflare 时需启用 gRPC |
+| Hysteria2 | UDP/QUIC | system/root | ACME 域名，必须 DNS only 直连 VPS |
+| TUIC | UDP/QUIC | system/root | ACME 域名，必须 DNS only 直连 VPS |
+| Trojan TLS | TCP | system/root | ACME 域名，建议 DNS only 直连 VPS |
+
+Shadowsocks 固定使用 `2022-blake3-aes-128-gcm` 多用户模式。TLS 协议由 sing-box 1.13.12 通过 Let's Encrypt HTTP-01 自动申请和续期证书，因此域名必须先解析到 VPS，TCP 80 必须可从公网访问。为避免多个 ACME 挑战监听器竞争端口，每台 VPS 最多启用一个 TLS/ACME 协议。用户级部署仍只允许 Reality 和 Shadowsocks；这不是端口号限制，而是 ACME 需要系统级监听和稳定的 `/etc/nodemanage/acme` 状态目录。
+
+“订阅连接域名”允许与 Agent 上报地址分离：WebSocket/gRPC 可填写 Cloudflare 代理域名，Reality、Trojan、Hysteria2 和 TUIC 通常填写直连域名。TCP 与 UDP 协议可以复用相同端口，同一传输层的协议不能占用同一端口。
 
 ## Agent 上报的权限
 

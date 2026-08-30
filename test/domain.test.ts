@@ -6,11 +6,16 @@ import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src
 
 const client = {
   id: "client-1", name: "Alice", uuid: "11111111-1111-4111-8111-111111111111",
-  shadowsocks_password: "dXNlci1rZXktMTIzNA==",
+  shadowsocks_password: "YWJjZGVmMDEyMzQ1Njc4OQ==",
 };
 const cases: [ProfileType, ProfileSettings, string][] = [
   ["vless-reality-vision", { listen_port: 443, server_name: "www.microsoft.com", reality_private_key: "private", reality_public_key: "public", reality_short_id: "0123456789abcdef", reality_handshake_server: "www.microsoft.com", reality_handshake_port: 443 }, "vless"],
-  ["shadowsocks-aead", { listen_port: 8388, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: "c2VydmVyLWtleS0xMjM=" }, "shadowsocks"],
+  ["shadowsocks-aead", { listen_port: 8388, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: "MDEyMzQ1Njc4OWFiY2RlZg==" }, "shadowsocks"],
+  ["vless-tls-websocket", { listen_port: 8443, server_address: "ws.example.net", tls_server_name: "ws.example.net", acme_email: "ops@example.net", websocket_path: "/proxy", websocket_host: "ws.example.net" }, "vless"],
+  ["vless-tls-grpc", { listen_port: 443, server_address: "grpc.example.net", tls_server_name: "grpc.example.net", acme_email: "ops@example.net", grpc_service_name: "NodeManage" }, "vless"],
+  ["hysteria2", { listen_port: 8443, server_address: "hy2.example.net", tls_server_name: "hy2.example.net", acme_email: "ops@example.net", hysteria2_obfs_password: "obfs-secret" }, "hysteria2"],
+  ["tuic", { listen_port: 10443, server_address: "tuic.example.net", tls_server_name: "tuic.example.net", acme_email: "ops@example.net" }, "tuic"],
+  ["trojan-tls", { listen_port: 9443, server_address: "trojan.example.net", tls_server_name: "trojan.example.net", acme_email: "ops@example.net" }, "trojan"],
 ];
 
 describe("production Protocol Profiles", () => {
@@ -22,12 +27,19 @@ describe("production Protocol Profiles", () => {
 
   it("keeps security-sensitive fixed choices", () => {
     const ss = (compileServerConfig("shadowsocks-aead", cases[1][1], [client]).inbounds as Record<string, unknown>[])[0];
-    expect(ss).toMatchObject({ network: "tcp", multiplex: { enabled: true } });
+    expect(ss).not.toHaveProperty("network");
+    expect(ss).toMatchObject({ multiplex: { enabled: true } });
+    const tuic = (compileServerConfig("tuic", cases[5][1], [client]).inbounds as Record<string, unknown>[])[0];
+    expect(tuic).toMatchObject({ congestion_control: "bbr", zero_rtt_handshake: false });
+    const grpc = (compileServerConfig("vless-tls-grpc", cases[3][1], [client]).inbounds as Record<string, unknown>[])[0];
+    expect(grpc).toMatchObject({ tls: { alpn: ["h2"], acme: { provider: "letsencrypt", disable_tls_alpn_challenge: true } }, transport: { type: "grpc", service_name: "NodeManage" } });
   });
 
   it("rejects invalid ports and short IDs", () => {
     expect(() => parseProfileSettings("shadowsocks-aead", { ...cases[1][1], listen_port: 70000 })).toThrow("valid port");
     expect(() => parseProfileSettings("vless-reality-vision", { ...cases[0][1], reality_short_id: "not-hex" })).toThrow("hexadecimal");
+    expect(() => parseProfileSettings("vless-tls-websocket", { ...cases[2][1], tls_server_name: "https://bad.example.net" })).toThrow("domain name");
+    expect(() => parseProfileSettings("vless-tls-websocket", { ...cases[2][1], websocket_path: "missing-slash" })).toThrow("start with /");
   });
 });
 
@@ -36,17 +48,17 @@ describe("subscriptions", () => {
     const node = { id: `node-${type}`, name: "Tokyo", address: "node.example.com", type, settings_json: JSON.stringify(settings) };
     expect((JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { type: string }).type).toBe(protocol);
     expect(mihomoSubscription(client, [node])).toContain("proxies:");
-    expect(uriSubscription(client, [node])).toContain("node.example.com");
+    expect(uriSubscription(client, [node])).toContain(settings.server_address ?? "node.example.com");
   });
 });
 
 describe("multiple protocols on one VPS", () => {
   it("compiles every selected protocol and expands them in subscriptions", () => {
     const profiles = cases.map(([type, settings]) => ({ type, settings }));
-    expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(2);
+    expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(7);
     const node = { id: "multi", name: "Tokyo", address: "node.example.com", type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
-    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(2);
-    expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(2);
+    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(7);
+    expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(7);
   });
 });
 

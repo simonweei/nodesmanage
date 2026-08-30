@@ -32,6 +32,11 @@ describe("control-plane production flow", () => {
   it("creates a VPS and binds a ticket to one installer claim", async () => {
     const userDefaults = await jsonRequest("/api/admin/profile-defaults?type=vless-reality-vision&mode=user", { headers: { cookie: adminCookie } });
     expect(await userDefaults.json()).toMatchObject({ deployment_mode: "user", settings: { listen_port: 8443 } });
+    const rejectedUserTls = await jsonRequest("/api/admin/vps", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Invalid user TLS", deployment_mode: "user", protocols: [{ type: "trojan-tls", settings: { listen_port: 9443, server_address: "tls.example.net", tls_server_name: "tls.example.net", acme_email: "ops@example.net" } }] }),
+    });
+    expect(rejectedUserTls.status).toBe(400);
     const rejectedLowPort = await jsonRequest("/api/admin/vps", {
       method: "POST", headers: { cookie: adminCookie },
       body: JSON.stringify({ name: "Invalid user VPS", deployment_mode: "user", protocols: [{ type: "vless-reality-vision", settings: { listen_port: 443 } }] }),

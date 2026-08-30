@@ -3,7 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE profiles (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('vless-reality-vision', 'shadowsocks-aead')),
+  type TEXT NOT NULL CHECK (type IN ('vless-reality-vision', 'shadowsocks-aead', 'vless-tls-websocket', 'vless-tls-grpc', 'hysteria2', 'tuic', 'trojan-tls')),
   settings_json TEXT NOT NULL,
   protocols_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
