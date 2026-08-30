@@ -21,7 +21,7 @@ CREATE TABLE agents (
   architecture TEXT NOT NULL,
   libc TEXT NOT NULL DEFAULT '',
   init_system TEXT NOT NULL DEFAULT '',
-  install_mode TEXT NOT NULL DEFAULT 'system',
+  install_mode TEXT NOT NULL CHECK (install_mode IN ('system', 'user')),
   agent_version TEXT,
   singbox_version TEXT,
   public_ip TEXT NOT NULL DEFAULT '',
@@ -50,6 +50,7 @@ CREATE TABLE nodes (
   name TEXT NOT NULL,
   region TEXT NOT NULL DEFAULT '',
   address TEXT NOT NULL DEFAULT '',
+  deployment_mode TEXT NOT NULL DEFAULT 'system' CHECK (deployment_mode IN ('system', 'user')),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
   retiring INTEGER NOT NULL DEFAULT 0 CHECK (retiring IN (0, 1)),
@@ -71,12 +72,10 @@ CREATE TABLE clients (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   uuid TEXT NOT NULL UNIQUE,
-  hysteria2_password TEXT NOT NULL,
-  trojan_password TEXT NOT NULL,
-  tuic_password TEXT NOT NULL,
   shadowsocks_password TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE subscription_groups (
@@ -162,6 +161,18 @@ CREATE TABLE alerts (
   FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
 );
 
+CREATE TABLE reconcile_queue (
+  agent_id TEXT PRIMARY KEY,
+  reason TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  target_revision INTEGER,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+
 CREATE INDEX idx_agents_last_seen ON agents(last_seen);
 CREATE INDEX idx_revisions_agent ON revisions(agent_id, id DESC);
 CREATE INDEX idx_nodes_enabled ON nodes(enabled);
@@ -172,3 +183,4 @@ CREATE INDEX idx_install_tickets_node ON install_tickets(node_id);
 CREATE INDEX idx_install_tickets_expiry ON install_tickets(expires_at, used_at);
 CREATE INDEX idx_install_events_node ON install_events(node_id, id DESC);
 CREATE INDEX idx_alerts_status ON alerts(status, severity, last_seen_at DESC);
+CREATE INDEX idx_reconcile_queue_updated ON reconcile_queue(updated_at);

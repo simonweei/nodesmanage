@@ -13,6 +13,9 @@ describe("portable bootstrap", () => {
     expect(script).toMatch(/EXPECTED='[a-f0-9]{64}'/);
     expect(script).not.toContain("SHA256SUMS");
     expect(script).toContain("nodemanage-agent\" install");
+    expect(script).toContain("--mode");
+    expect(script).toContain("user mode must run without sudo");
+    expect(script).not.toContain("run this installer as root");
     expect(script).not.toContain("systemctl");
     expect(script).not.toContain("github.com/SagerNet");
   });
@@ -20,7 +23,7 @@ describe("portable bootstrap", () => {
   it("returns a pinned, checksummed release", async () => {
     const response = installManifest(new Request("https://manage.example.com/api/install/manifest?os=linux&arch=arm64"));
     const manifest = await response.json() as { agent: { urls: string[]; sha256: string }; sing_box: { version: string; urls: string[]; sha256: string } };
-    expect(manifest.agent.urls).toEqual(["https://manage.example.com/downloads/v0.4.0/nodemanage-agent-linux-arm64"]);
+    expect(manifest.agent.urls).toEqual(["https://manage.example.com/downloads/v0.5.0/nodemanage-agent-linux-arm64"]);
     expect(manifest.agent.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.sing_box).toMatchObject({ version: "1.13.12" });
     expect(manifest.sing_box.urls[0]).toContain("manage.example.com/downloads/v1.13.12/");
@@ -30,9 +33,9 @@ describe("portable bootstrap", () => {
 
   it("derives stable and separated idempotent credentials", async () => {
     const secret = "test-only-secret-with-at-least-32-characters";
-    const first = await hmacHex(secret, "agent-id:ticket");
-    expect(await hmacHex(secret, "agent-id:ticket")).toBe(first);
-    expect(await hmacHex(secret, "agent-token:ticket")).not.toBe(first);
+    const first = await hmacHex(secret, "agent-id:ticket:installer-claim");
+    expect(await hmacHex(secret, "agent-id:ticket:installer-claim")).toBe(first);
+    expect(await hmacHex(secret, "agent-token:ticket:installer-claim")).not.toBe(first);
     expect(first).toMatch(/^[a-f0-9]{64}$/);
   });
 });

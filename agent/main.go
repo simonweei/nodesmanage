@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,9 +20,8 @@ import (
 )
 
 const (
-	version           = "0.4.0"
-	defaultConfigPath = "/etc/nodemanage/agent.json"
-	maxResponseBytes  = 3 << 20
+	version          = "0.5.0"
+	maxResponseBytes = 3 << 20
 )
 
 type config struct {
@@ -32,6 +32,7 @@ type config struct {
 	SingBoxPath string `json:"sing_box_path"`
 	ServiceName string `json:"service_name"`
 	RuntimePath string `json:"runtime_config_path"`
+	StatePath   string `json:"state_path"`
 	InitSystem  string `json:"init_system"`
 	InstallMode string `json:"install_mode"`
 }
@@ -104,9 +105,9 @@ func main() {
 	case "uninstall":
 		uninstallCommand(os.Args[2:])
 	case "run":
-		run(false)
+		run(os.Args[2:], false)
 	case "once":
-		run(true)
+		run(os.Args[2:], true)
 	case "version":
 		fmt.Println(version)
 	default:
@@ -114,8 +115,11 @@ func main() {
 	}
 }
 
-func run(once bool) {
-	a := &agent{configPath: defaultConfigPath, client: &http.Client{Timeout: 20 * time.Second}}
+func run(args []string, once bool) {
+	flags := flag.NewFlagSet("run", flag.ExitOnError)
+	configPath := flags.String("config", defaultLayout().AgentConfig, "agent configuration path")
+	_ = flags.Parse(args)
+	a := &agent{configPath: *configPath, client: &http.Client{Timeout: 20 * time.Second}}
 	must(a.loadConfig())
 	for {
 		if err := a.sync(); err != nil {
@@ -139,14 +143,11 @@ func (a *agent) loadConfig() error {
 	if err := json.Unmarshal(data, &a.config); err != nil {
 		return err
 	}
-	if a.config.ServerURL == "" || a.config.AgentToken == "" {
+	if a.config.ServerURL == "" || a.config.AgentID == "" || a.config.AgentToken == "" || a.config.SingBoxPath == "" || a.config.RuntimePath == "" || a.config.StatePath == "" || a.config.InitSystem == "" {
 		return errors.New("agent configuration is incomplete")
 	}
-	if a.config.InitSystem == "" {
-		a.config.InitSystem = detectPlatform().InitSystem
-	}
-	if a.config.InstallMode == "" {
-		a.config.InstallMode = "system"
+	if a.config.InstallMode != "system" && a.config.InstallMode != "user" {
+		return errors.New("agent configuration has an invalid install_mode")
 	}
 	return nil
 }
@@ -158,7 +159,7 @@ func (a *agent) sync() error {
 	cpuUsage := a.cpuUsage()
 	request := syncRequest{
 		AgentVersion: version, SingBoxVersion: commandOutput(a.config.SingBoxPath, "version"), CurrentRevision: currentRevision,
-		SingBoxRunning: serviceActive(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service")), UptimeSeconds: uptimeSeconds(),
+		SingBoxRunning: serviceActive(a.config.InitSystem, a.config.InstallMode, strings.TrimSuffix(a.config.ServiceName, ".service")), UptimeSeconds: uptimeSeconds(),
 		CPUUsagePercent:  cpuUsage,
 		MemoryTotalBytes: memoryTotal, MemoryUsedBytes: memoryUsed, DiskTotalBytes: diskTotal, DiskUsedBytes: diskUsed,
 		Permissions: collectPermissions(a.config),
@@ -224,10 +225,14 @@ func (a *agent) apply(revision int64, configJSON, expectedHash string) error {
 	if !strings.EqualFold(hex.EncodeToString(digest[:]), expectedHash) {
 		return errors.New("configuration checksum mismatch")
 	}
-	if err := ensureReleaseLayout(a.config.RuntimePath); err != nil {
+	layout, err := layoutFromConfig(a.config)
+	if err != nil {
+		return err
+	}
+	if err := ensureReleaseLayout(a.config.RuntimePath, layout.ReleasesRoot); err != nil {
 		return fmt.Errorf("prepare A/B releases: %w", err)
 	}
-	releasesRoot := "/etc/nodemanage/releases"
+	releasesRoot := layout.ReleasesRoot
 	temporaryDir := filepath.Join(releasesRoot, fmt.Sprintf("r%d.tmp", revision))
 	releaseDir := filepath.Join(releasesRoot, fmt.Sprintf("r%d", revision))
 	if err := os.RemoveAll(temporaryDir); err != nil {
@@ -241,6 +246,11 @@ func (a *agent) apply(revision int64, configJSON, expectedHash string) error {
 	if err := os.WriteFile(temporaryConfig, []byte(configJSON), 0600); err != nil {
 		return fmt.Errorf("write temporary config: %w", err)
 	}
+	if a.config.InstallMode == "user" {
+		if err := validateUserPorts([]byte(configJSON)); err != nil {
+			return err
+		}
+	}
 	if output, err := exec.Command(a.config.SingBoxPath, "check", "-c", temporaryConfig).CombinedOutput(); err != nil {
 		return fmt.Errorf("sing-box check: %s", strings.TrimSpace(string(output)))
 	}
@@ -248,8 +258,8 @@ func (a *agent) apply(revision int64, configJSON, expectedHash string) error {
 	if err := os.Rename(temporaryDir, releaseDir); err != nil {
 		return fmt.Errorf("finalize release: %w", err)
 	}
-	currentLink := "/etc/nodemanage/current"
-	previousLink := "/etc/nodemanage/previous"
+	currentLink := filepath.Join(layout.StateRoot, "current")
+	previousLink := filepath.Join(layout.StateRoot, "previous")
 	oldTarget, _ := os.Readlink(currentLink)
 	if oldTarget != "" {
 		if err := atomicSymlink(oldTarget, previousLink); err != nil {
@@ -259,42 +269,63 @@ func (a *agent) apply(revision int64, configJSON, expectedHash string) error {
 	if err := atomicSymlink(releaseDir, currentLink); err != nil {
 		return fmt.Errorf("activate release: %w", err)
 	}
-	if err := restartService(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service")); err != nil {
+	if err := restartService(a.config.InitSystem, a.config.InstallMode, strings.TrimSuffix(a.config.ServiceName, ".service")); err != nil {
 		return a.rollback(fmt.Errorf("restart sing-box: %w", err))
 	}
 	time.Sleep(800 * time.Millisecond)
-	if !serviceActive(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service")) {
+	if !serviceActive(a.config.InitSystem, a.config.InstallMode, strings.TrimSuffix(a.config.ServiceName, ".service")) {
 		return a.rollback(errors.New("sing-box is not active after restart"))
 	}
 	return os.WriteFile(a.config.RuntimePath+".revision", []byte(strconv.FormatInt(revision, 10)+"\n"), 0600)
 }
 
+func validateUserPorts(data []byte) error {
+	var document struct {
+		Inbounds []struct {
+			ListenPort int `json:"listen_port"`
+		} `json:"inbounds"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("parse runtime configuration: %w", err)
+	}
+	for _, inbound := range document.Inbounds {
+		if inbound.ListenPort > 0 && inbound.ListenPort <= 1024 {
+			return fmt.Errorf("user installation cannot bind privileged port %d; use a port above 1024", inbound.ListenPort)
+		}
+	}
+	return nil
+}
+
 func (a *agent) rollback(reason error) error {
-	previous, err := os.Readlink("/etc/nodemanage/previous")
+	layout, layoutErr := layoutFromConfig(a.config)
+	if layoutErr != nil {
+		return fmt.Errorf("%v; rollback layout unavailable: %w", reason, layoutErr)
+	}
+	previous, err := os.Readlink(filepath.Join(layout.StateRoot, "previous"))
 	if err != nil {
 		return fmt.Errorf("%v; rollback unavailable: %w", reason, err)
 	}
-	if err := atomicSymlink(previous, "/etc/nodemanage/current"); err != nil {
+	if err := atomicSymlink(previous, filepath.Join(layout.StateRoot, "current")); err != nil {
 		return fmt.Errorf("%v; rollback switch failed: %w", reason, err)
 	}
-	restartErr := restartService(a.config.InitSystem, strings.TrimSuffix(a.config.ServiceName, ".service"))
+	restartErr := restartService(a.config.InitSystem, a.config.InstallMode, strings.TrimSuffix(a.config.ServiceName, ".service"))
 	if restartErr != nil {
 		return fmt.Errorf("%v; rollback restart failed: %w", reason, restartErr)
 	}
 	return fmt.Errorf("%v; previous configuration restored", reason)
 }
 
-func ensureReleaseLayout(runtimePath string) error {
-	root := "/etc/nodemanage"
+func ensureReleaseLayout(runtimePath, releasesRoot string) error {
+	root := filepath.Dir(releasesRoot)
 	currentLink := filepath.Join(root, "current")
-	if err := os.MkdirAll(filepath.Join(root, "releases"), 0700); err != nil {
+	if err := os.MkdirAll(releasesRoot, 0700); err != nil {
 		return err
 	}
 	if _, err := os.Stat(currentLink); errors.Is(err, os.ErrNotExist) {
 		if err := os.Remove(currentLink); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		bootstrapDir := filepath.Join(root, "releases", "bootstrap")
+		bootstrapDir := filepath.Join(releasesRoot, "bootstrap")
 		if err := os.MkdirAll(bootstrapDir, 0700); err != nil {
 			return err
 		}
@@ -343,9 +374,9 @@ func collectPermissions(cfg config) permissions {
 		User: username, UID: os.Getuid(), EUID: os.Geteuid(), GID: os.Getgid(), IsRoot: os.Geteuid() == 0,
 		EffectiveCapsHex: effectiveCapabilities(), ConfigReadable: canOpen(cfg.RuntimePath, os.O_RDONLY),
 		ConfigWritable: canOpen(cfg.RuntimePath, os.O_WRONLY), SingBoxExecutable: commandOK(cfg.SingBoxPath, "version"),
-		ServiceControl: os.Geteuid() == 0 && (platform.InitSystem == "systemd" || platform.InitSystem == "openrc"),
+		ServiceControl: serviceControlAvailable(cfg.InitSystem, cfg.InstallMode),
 		Distribution:   platform.Distribution, DistributionVersion: platform.DistributionVersion, Libc: platform.Libc,
-		InitSystem: platform.InitSystem, InstallMode: platform.InstallMode, BindLowPort: os.Geteuid() == 0 || hasBindLowPortCapability(),
+		InitSystem: platform.InitSystem, InstallMode: cfg.InstallMode, BindLowPort: os.Geteuid() == 0 || hasBindLowPortCapability(),
 	}
 }
 

@@ -8,3 +8,4 @@ dist/
 bin/
 worker-configuration.d.ts
 *.log
+backups/*.sql

@@ -17,9 +17,29 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
 export async function readJsonObject(request: Request, maxBytes = 64 * 1024): Promise<Record<string, unknown>> {
   const length = Number(request.headers.get("content-length") ?? "0");
   if (length > maxBytes) throw new HttpError(413, "request body too large");
-  const body: unknown = await request.json().catch(() => {
+  if (!request.body) throw new HttpError(400, "JSON body required");
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw new HttpError(413, "request body too large");
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  let body: unknown;
+  try {
+    body = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
     throw new HttpError(400, "invalid JSON body");
-  });
+  }
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new HttpError(400, "JSON object required");
   }

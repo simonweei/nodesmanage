@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -18,6 +19,62 @@ func TestParseOSRelease(t *testing.T) {
 	values := parseOSRelease(path)
 	if values["ID"] != "alpine" || values["VERSION_ID"] != "3.21" {
 		t.Fatalf("unexpected os-release: %#v", values)
+	}
+}
+
+func TestUserLayoutUsesXDGDirectories(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfg"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	layout, err := layoutForMode("user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layout.AgentPath != filepath.Join(home, ".local", "bin", "nodemanage-agent") {
+		t.Fatalf("agent path = %q", layout.AgentPath)
+	}
+	if layout.AgentConfig != filepath.Join(home, "cfg", "nodemanage", "agent.json") {
+		t.Fatalf("config path = %q", layout.AgentConfig)
+	}
+	if layout.ReleasesRoot != filepath.Join(home, "state", "nodemanage", "releases") {
+		t.Fatalf("releases path = %q", layout.ReleasesRoot)
+	}
+}
+
+func TestUserSystemdUnitsAreUnprivileged(t *testing.T) {
+	root := t.TempDir()
+	layout := installLayout{Mode: "user", AgentPath: filepath.Join(root, "bin", "nodemanage-agent"), SingBoxPath: filepath.Join(root, "bin", "sing-box"), AgentConfig: filepath.Join(root, "agent-config.json"), RuntimeConfig: filepath.Join(root, "config.json"), ServiceDir: filepath.Join(root, "systemd")}
+	if err := writeServices("systemd", layout); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(layout.ServiceDir, "sing-box.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(data)
+	if strings.Contains(unit, "CAP_NET_BIND_SERVICE") {
+		t.Fatal("user service must not request privileged capabilities")
+	}
+	if !strings.Contains(unit, "WantedBy=default.target") || !strings.Contains(unit, "sing-box") {
+		t.Fatalf("unexpected user unit:\n%s", unit)
+	}
+	agentUnit, err := os.ReadFile(filepath.Join(layout.ServiceDir, "nodemanage-agent.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(agentUnit), "--config") || !strings.Contains(string(agentUnit), "config.json") {
+		t.Fatalf("Agent unit does not pin its configuration path:\n%s", agentUnit)
+	}
+}
+
+func TestUserConfigRejectsPrivilegedPorts(t *testing.T) {
+	if err := validateUserPorts([]byte(`{"inbounds":[{"listen_port":443}]}`)); err == nil {
+		t.Fatal("expected privileged port rejection")
+	}
+	if err := validateUserPorts([]byte(`{"inbounds":[{"listen_port":8443}]}`)); err != nil {
+		t.Fatal(err)
 	}
 }
 

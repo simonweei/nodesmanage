@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "channel": "stable",
-  "agent_version": "0.4.0",
+  "agent_version": "0.5.0",
   "sing_box_version": "1.13.12",
   "releases": {
     "amd64": {
-      "agentSha256": "ee0203d9e5a338df12a511f9de84e175189a6b2e7bb1c4a0b8fedaf67b0e0088",
+      "agentSha256": "cb83172b4ebc995e0fa1b5d36e4ba4a6adf210e45440faea5dba3c53fdfc3483",
       "singBoxSha256": "1540533adb3df24f5ad5f14b5c7ca3dbc2401b10a1c1eb278fcadcada47ec6c4"
     },
     "arm64": {
-      "agentSha256": "4bb3d94af33d70d1fa79c05b3ed9e13148cc9cf38beca0e353fe573a56ee8561",
+      "agentSha256": "d8cfe85f97ecdff2af4155bfb75cc1829c35ce1d9a0294d1e191cc332341ab1c",
       "singBoxSha256": "1ffa3b48ad6fa98f9fd810482e39bdd5b6157782ef11ce37d67bdcfd9338547a"
     }
   }

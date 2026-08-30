@@ -8,15 +8,22 @@ set -eu
 SERVER_URL='${safeOrigin}'
 TICKET=''
 NAME=''
+MODE='auto'
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --ticket) TICKET="\${2:-}"; shift 2 ;;
     --name) NAME="\${2:-}"; shift 2 ;;
+    --mode) MODE="\${2:-}"; shift 2 ;;
     *) echo "[NM-E101] unknown argument: $1" >&2; exit 2 ;;
   esac
 done
 
-[ "$(id -u)" -eq 0 ] || { echo "[NM-E102] run this installer as root" >&2; exit 1; }
+case "$MODE" in
+  auto) if [ "$(id -u)" -eq 0 ]; then MODE=system; else MODE=user; fi ;;
+  system) [ "$(id -u)" -eq 0 ] || { echo "[NM-E102] system mode requires root" >&2; exit 1; } ;;
+  user) [ "$(id -u)" -ne 0 ] || { echo "[NM-E102] user mode must run without sudo" >&2; exit 1; } ;;
+  *) echo "[NM-E102] --mode must be auto, system or user" >&2; exit 2 ;;
+esac
 [ -n "$TICKET" ] || { echo "[NM-E103] --ticket is required" >&2; exit 2; }
 case "$(uname -m)" in
   x86_64|amd64) ARCH=amd64; EXPECTED='${RELEASE_DIGESTS.amd64.agentSha256}' ;;
@@ -51,7 +58,7 @@ download "$SERVER_URL/downloads/v${AGENT_VERSION}/nodemanage-agent-linux-$ARCH" 
 ACTUAL="$(sha256_file "$TMP_DIR/nodemanage-agent")"
 [ "$EXPECTED" = "$ACTUAL" ] || { echo "[NM-E108] Agent checksum mismatch" >&2; exit 1; }
 chmod 0755 "$TMP_DIR/nodemanage-agent"
-"$TMP_DIR/nodemanage-agent" install --server "$SERVER_URL" --ticket "$TICKET" --name "$NAME" --manifest "$MANIFEST_URL"
+"$TMP_DIR/nodemanage-agent" install --server "$SERVER_URL" --ticket "$TICKET" --name "$NAME" --mode "$MODE" --manifest "$MANIFEST_URL"
 `;
   return new Response(script, { headers: {
     "content-type": "text/x-shellscript; charset=utf-8",

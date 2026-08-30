@@ -36,8 +36,8 @@ function cookieValue(request: Request): string | null {
 }
 
 function configuredPassword(env: Pick<Env, "ADMIN_PASSWORD">): string {
-  if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.length < 6) {
-    throw new HttpError(503, "ADMIN_PASSWORD must be configured with at least 6 characters");
+  if (typeof env.ADMIN_PASSWORD !== "string" || env.ADMIN_PASSWORD.length < 12) {
+    throw new HttpError(503, "ADMIN_PASSWORD must be configured with at least 12 characters");
   }
   return env.ADMIN_PASSWORD;
 }
@@ -63,10 +63,16 @@ function sessionCookie(request: Request, token: string, maxAge: number): string 
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
 }
 
-export async function handleAdminAuth(request: Request, env: Pick<Env, "ADMIN_PASSWORD">): Promise<Response> {
+export async function handleAdminAuth(request: Request, env: Pick<Env, "ADMIN_PASSWORD" | "LOGIN_RATE_LIMITER">): Promise<Response> {
   const path = new URL(request.url).pathname;
   if (path === "/api/auth/session" && request.method === "GET") return json({ authenticated: await hasAdminSession(request, env) });
   if (path === "/api/auth/login" && request.method === "POST") {
+    const actor = request.headers.get("cf-connecting-ip") ?? "unknown";
+    const limited = await env.LOGIN_RATE_LIMITER.limit({ key: `admin-login:${actor}` });
+    if (!limited.success) {
+      console.warn(JSON.stringify({ event: "rate_limited", route: "admin_login", actor }));
+      throw new HttpError(429, "登录尝试过多，请一分钟后重试");
+    }
     const body = await readJsonObject(request, 4096);
     const supplied = stringField(body, "password", { required: true, max: 1024 });
     const valid = await equalSecret(supplied, configuredPassword(env));
