@@ -57,6 +57,7 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 - 配置失败：面板查看错误及安装事件。Agent 会在 `sing-box check` 或重启失败时回滚到 previous；修正 Profile 后保存会自动生成新修订。
 - 配置发布中断：变更与 `reconcile_queue` 在同一个 D1 事务写入，Cron 会重试；也可在面板点击“发布”立即重试。
 - TLS/ACME 失败：确认域名 A/AAAA 记录确实指向当前 VPS、TCP 80 入站可达、系统时间正确，并检查 `/etc/nodemanage/certificates` 可写。证书状态与最近错误会随 Agent 权限报告上传；相同域名的多个 TLS 协议共享 `/etc/nodemanage/certificates/<domain>/current/`，续期默认在到期前 30 天开始。Hysteria2/TUIC 使用 UDP，Cloudflare 普通代理不能转发该流量，记录必须为 DNS only。WebSocket/gRPC 走 Cloudflare 时还需确认端口在代理支持范围内，gRPC 已在域名网络设置中启用。
+- Named Tunnel 创建失败：公网域名必须是该 Tunnel 在 Cloudflare Zero Trust 中已经配置的 Public Hostname，例如 `tunnel.serverdomain.com`；Quick Tunnel 才会在安装后自动取得随机域名。Direct TLS 的公网域名、订阅地址、SNI、证书域名与 WebSocket Host 由控制面统一为同一值，协议表单不再重复填写。
 - 订阅泄露：在订阅管理中轮换 Token；旧 Token 立即失效。删除客户端/订阅也会立即撤销 Token 并自动发布 VPS 用户列表。
 - VPS 下线：先“安全退役”，等待空用户配置应用后再次删除；只有机器已经不可访问且明确接受残留配置风险时才强制删除。
 - Worker 回滚：回滚 Worker 代码不能自动回滚数据库。新迁移若不向后兼容，应使用 Time Travel 或经过验证的前向修复迁移。

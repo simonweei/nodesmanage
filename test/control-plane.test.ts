@@ -34,7 +34,7 @@ describe("control-plane production flow", () => {
     expect(await userDefaults.json()).toMatchObject({ deployment_mode: "user", settings: { listen_port: 8443 } });
     const rejectedUserTls = await jsonRequest("/api/admin/vps", {
       method: "POST", headers: { cookie: adminCookie },
-      body: JSON.stringify({ name: "Invalid user TLS", deployment_mode: "user", protocols: [{ type: "trojan-tls", settings: { listen_port: 9443, server_address: "tls.example.net", tls_server_name: "tls.example.net", acme_email: "ops@example.net" } }] }),
+      body: JSON.stringify({ name: "Invalid user TLS", connect_host: "tls.example.net", acme_email: "ops@example.net", deployment_mode: "user", protocols: [{ type: "trojan-tls", settings: { listen_port: 9443 } }] }),
     });
     expect(rejectedUserTls.status).toBe(400);
     const rejectedLowPort = await jsonRequest("/api/admin/vps", {
@@ -138,13 +138,17 @@ describe("control-plane production flow", () => {
     const created = await jsonRequest("/api/admin/vps", {
       method: "POST",
       headers: { cookie: adminCookie },
-      body: JSON.stringify({ name: "Shared TLS", connect_host: "shared.example.net", deployment_policy: "system", ingress_mode: "direct", protocols: [
-        { type: "vless-tls-websocket", settings: { listen_port: 8443, server_address: "shared.example.net", tls_server_name: "shared.example.net", acme_email: "ops@example.net", websocket_path: "/vless", websocket_host: "shared.example.net" } },
-        { type: "trojan-tls-websocket", settings: { listen_port: 9443, server_address: "shared.example.net", tls_server_name: "shared.example.net", acme_email: "ops@example.net", websocket_path: "/trojan", websocket_host: "shared.example.net" } },
+      body: JSON.stringify({ name: "Shared TLS", connect_host: "shared.example.net", acme_email: "ops@example.net", deployment_policy: "system", ingress_mode: "direct", protocols: [
+        { type: "vless-tls-websocket", settings: { listen_port: 8443, websocket_path: "/vless" } },
+        { type: "trojan-tls-websocket", settings: { listen_port: 9443, websocket_path: "/trojan" } },
       ] }),
     });
     expect(created.status).toBe(201);
-    const value = await created.json<{ id: string }>();
+    const value = await created.json<{ id: string; protocols: Array<{ settings: Record<string, string> }> }>();
+    expect(value.protocols.map(({ settings }) => settings)).toEqual([
+      expect.objectContaining({ server_address: "shared.example.net", tls_server_name: "shared.example.net", websocket_host: "shared.example.net", acme_email: "ops@example.net" }),
+      expect.objectContaining({ server_address: "shared.example.net", tls_server_name: "shared.example.net", websocket_host: "shared.example.net", acme_email: "ops@example.net" }),
+    ]);
     expect((await jsonRequest(`/api/admin/vps/${value.id}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
   });
 
@@ -156,6 +160,12 @@ describe("control-plane production flow", () => {
         named: { edge_ports: [443, 2053, 2083, 2087, 2096, 8443] },
       },
     });
+    const missingNamedHostname = await jsonRequest("/api/admin/vps", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Missing Named Host", ingress_mode: "cloudflare_tunnel", tunnel_kind: "named", protocols: [{ type: "vless-tls-websocket", settings: { listen_port: 18081, edge_port: 443, websocket_path: "/proxy" } }] }),
+    });
+    expect(missingNamedHostname.status).toBe(400);
+    expect(await missingNamedHostname.json()).toMatchObject({ error: "Named Tunnel 必须填写 Cloudflare Public Hostname" });
     const invalidQuickPort = await jsonRequest("/api/admin/vps", {
       method: "POST", headers: { cookie: adminCookie },
       body: JSON.stringify({ name: "Invalid Quick", ingress_mode: "cloudflare_tunnel", tunnel_kind: "quick", protocols: [{ type: "vless-tls-websocket", settings: { listen_port: 18081, edge_port: 8443, websocket_path: "/proxy" } }] }),

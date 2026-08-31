@@ -103,8 +103,9 @@ function tunnelKind(value: unknown, mode: IngressMode): TunnelKind {
   return value;
 }
 
-function endpointHost(value: unknown, required: boolean): string {
-  const host = stringField({ host: value }, "host", { required, max: 253 }).toLowerCase();
+function endpointHost(value: unknown, required: boolean, requiredMessage = "连接地址不能为空"): string {
+  const host = stringField({ host: value }, "host", { max: 253 }).toLowerCase();
+  if (required && !host) throw new HttpError(400, requiredMessage);
   if (!host) return "";
   const ipv6 = host.includes(":") && /^[0-9a-f:]+$/.test(host) && host.split(":").length >= 3;
   if (!ipv6 && (/[/\s@?#]/.test(host) || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(host))) throw new HttpError(400, "connect_host must be a hostname or IP address without a scheme or port");
@@ -160,7 +161,7 @@ function requiresSystemDeployment(ingress: IngressMode, profiles: ProtocolProfil
   return ingress === "direct" && profiles.some((profile) => profile.settings.listen_port <= 1024 || isAcmeProfile(profile.type));
 }
 
-async function submittedProtocols(body: Record<string, unknown>, policy: DeploymentPolicy, ingress: IngressMode): Promise<ProtocolProfile[]> {
+async function submittedProtocols(body: Record<string, unknown>, policy: DeploymentPolicy, ingress: IngressMode, connectHost: string): Promise<ProtocolProfile[]> {
   if (!Array.isArray(body.protocols) || body.protocols.length === 0 || body.protocols.length > 8) {
     throw new HttpError(400, "protocols must be a non-empty array");
   }
@@ -174,7 +175,18 @@ async function submittedProtocols(body: Record<string, unknown>, policy: Deploym
     types.add(type);
     const submitted = value.settings && typeof value.settings === "object" && !Array.isArray(value.settings) ? value.settings as Record<string, unknown> : {};
     const defaultsMode: DeploymentMode = policy === "auto" ? (isAcmeProfile(type) ? "system" : "user") : policy;
-    profiles.push({ type, settings: parseProfileSettings(type, { ...(await profileDefaults(type, defaultsMode, ingress)), ...submitted }, ingress) });
+    const settings = { ...(await profileDefaults(type, defaultsMode, ingress)), ...submitted };
+    if (ingress === "direct" && isAcmeProfile(type)) {
+      const email = stringField(body, "acme_email", { max: 254 }).toLowerCase();
+      if (!email) throw new HttpError(400, "Direct TLS 协议必须填写公共 ACME 邮箱");
+      Object.assign(settings, {
+        server_address: connectHost,
+        tls_server_name: connectHost,
+        acme_email: email,
+        ...(type === "vless-tls-websocket" || type === "trojan-tls-websocket" ? { websocket_host: connectHost } : {}),
+      });
+    }
+    profiles.push({ type, settings: parseProfileSettings(type, settings, ingress) });
   }
   validateDeploymentPorts(policy, ingress, profiles);
   return profiles;
@@ -318,8 +330,9 @@ async function createVps(request: Request, env: Env): Promise<Response> {
   const policy = deploymentPolicy(body.deployment_policy ?? body.deployment_mode);
   const ingress = ingressMode(body.ingress_mode);
   const kind = tunnelKind(body.tunnel_kind, ingress);
-  const connectHost = endpointHost(body.connect_host, ingress === "direct" || kind === "named");
-  const protocols = await submittedProtocols(body, policy, ingress);
+  const hostMessage = kind === "named" ? "Named Tunnel 必须填写 Cloudflare Public Hostname" : "Direct 入口必须填写公网 IP 或域名";
+  const connectHost = endpointHost(body.connect_host, ingress === "direct" || kind === "named", hostMessage);
+  const protocols = await submittedProtocols(body, policy, ingress, connectHost);
   validateDeploymentPorts(policy, ingress, protocols);
   if (ingress === "cloudflare_tunnel") validateTunnelProfiles(kind, protocols);
   const systemRequired = requiresSystemDeployment(ingress, protocols);
@@ -351,9 +364,10 @@ async function updateVps(id: string, request: Request, env: Env): Promise<Respon
   const kind = tunnelKind(body.tunnel_kind ?? current.tunnel_kind, ingress);
   if (current.agent_id && (policy !== current.deployment_policy || ingress !== current.ingress_mode || kind !== current.tunnel_kind)) throw new HttpError(409, "已安装 VPS 不能切换部署或入口模式，请先安全退役后重新创建");
   const submittedHost = body.connect_host === undefined ? current.connect_host : body.connect_host;
-  const connectHost = kind === "quick" ? current.connect_host : endpointHost(submittedHost, ingress === "direct" || kind === "named");
+  const hostMessage = kind === "named" ? "Named Tunnel 必须填写 Cloudflare Public Hostname" : "Direct 入口必须填写公网 IP 或域名";
+  const connectHost = kind === "quick" ? current.connect_host : endpointHost(submittedHost, ingress === "direct" || kind === "named", hostMessage);
   if (current.agent_id && ingress === "cloudflare_tunnel" && connectHost !== current.connect_host) throw new HttpError(409, "已安装 Tunnel 的公网域名不能在线修改，请安全退役后重新创建");
-  const protocols = await submittedProtocols(body, policy, ingress);
+  const protocols = await submittedProtocols(body, policy, ingress, connectHost);
   validateDeploymentPorts(policy, ingress, protocols);
   if (ingress === "cloudflare_tunnel") validateTunnelProfiles(kind, protocols);
   const systemRequired = requiresSystemDeployment(ingress, protocols);
