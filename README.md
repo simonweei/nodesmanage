@@ -1,6 +1,6 @@
 # NodeManage
 
-部署在 Cloudflare Worker 上的精简 sing-box 节点管理平台。控制面、订阅和 D1 位于 Cloudflare；数据面可选择显式公网地址直连 VPS，或让 VLESS WebSocket 经 Cloudflare Tunnel 进入只监听本机回环地址的 sing-box。
+部署在 Cloudflare Worker 上的精简 sing-box 节点管理平台。控制面、订阅和 D1 位于 Cloudflare；数据面可选择显式公网地址直连 VPS，或让 VLESS/Trojan WebSocket 经 Cloudflare Tunnel 进入只监听本机回环地址的 sing-box。
 
 ## 组件
 
@@ -91,9 +91,9 @@ curl -fsSL https://管理域名/install.sh | sh -s -- --ticket 一次性票据 -
 
 常规用户级部署使用 systemd 用户管理器。若 VPS 没有持续登录会话，管理员需执行 `loginctl enable-linger 用户名`；这一步属于系统策略，Agent 不会自行提权修改。无 systemd/OpenRC 时会自动回退 standalone，OpenRC 当前仅支持系统级部署。
 
-当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.7.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
+当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.8.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
 
-Tunnel 模式固定使用 VLESS + WebSocket：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，并在一次性安装命令中填写已配置路由的域名和 Tunnel Token。Token 不写入 D1，只保存在 VPS 的 `0600` Agent 配置中。系统不会再把 Worker 看到的请求出口 IP 当作订阅地址。
+Tunnel 模式只提供 Cloudflare Public Hostname 能直接承载的 VLESS/Trojan + TLS + WebSocket 组合：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 固定公网端口 443，会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，可使用 443、2053、2083、2087、2096 或 8443，并在一次性安装命令中填写已配置路由的域名和 Tunnel Token。Token 不写入 D1，只保存在 VPS 的 `0600` Agent 配置中。系统不会再把 Worker 看到的请求出口 IP 当作订阅地址。
 
 生产协议包括：
 
@@ -106,6 +106,7 @@ Tunnel 模式固定使用 VLESS + WebSocket：sing-box 只监听 `127.0.0.1:高�
 | Hysteria2 | UDP/QUIC | system/root | ACME 域名，必须 DNS only 直连 VPS |
 | TUIC | UDP/QUIC | system/root | ACME 域名，必须 DNS only 直连 VPS |
 | Trojan TLS | TCP | system/root | ACME 域名，建议 DNS only 直连 VPS |
+| Trojan TLS + WebSocket | TCP | system/root | ACME 域名；Tunnel 模式由 Cloudflare 边缘终止 TLS |
 
 Shadowsocks 固定使用 `2022-blake3-aes-128-gcm` 多用户模式。TLS 协议由 sing-box 1.13.12 通过 Let's Encrypt HTTP-01 自动申请和续期证书，因此域名必须先解析到 VPS，TCP 80 必须可从公网访问。为避免多个 ACME 挑战监听器竞争端口，每台 VPS 最多启用一个 TLS/ACME 协议。用户级部署仍只允许 Reality 和 Shadowsocks；这不是端口号限制，而是 ACME 需要系统级监听和稳定的 `/etc/nodemanage/acme` 状态目录。
 

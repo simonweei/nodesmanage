@@ -31,6 +31,7 @@ function singOutbound(client: ClientRecord, node: ExpandedNode): Record<string, 
     case "hysteria2": return { ...common, type: "hysteria2", password: client.shadowsocks_password, obfs: { type: "salamander", password: node.settings.hysteria2_obfs_password }, tls: clientTls(node.settings) };
     case "tuic": return { ...common, type: "tuic", uuid: client.uuid, password: client.shadowsocks_password, congestion_control: "bbr", udp_relay_mode: "native", zero_rtt_handshake: false, tls: clientTls(node.settings) };
     case "trojan-tls": return { ...common, type: "trojan", password: client.shadowsocks_password, tls: clientTls(node.settings), multiplex: { enabled: true } };
+    case "trojan-tls-websocket": return { ...common, type: "trojan", password: client.shadowsocks_password, tls: clientTls(node.settings), transport: { type: "ws", path: node.settings.websocket_path, headers: { Host: node.settings.websocket_host } } };
   }
 }
 
@@ -49,6 +50,7 @@ function mihomoProxy(client: ClientRecord, node: ExpandedNode): string[] {
     case "hysteria2": return [...lines, "    type: hysteria2", `    password: ${yaml(client.shadowsocks_password)}`, `    sni: ${yaml(s.tls_server_name ?? "")}`, "    skip-cert-verify: false", "    obfs: salamander", `    obfs-password: ${yaml(s.hysteria2_obfs_password ?? "")}`];
     case "tuic": return [...lines, "    type: tuic", `    uuid: ${yaml(client.uuid)}`, `    password: ${yaml(client.shadowsocks_password)}`, `    sni: ${yaml(s.tls_server_name ?? "")}`, "    skip-cert-verify: false", "    congestion-controller: bbr", "    udp-relay-mode: native", "    udp: true"];
     case "trojan-tls": return [...lines, "    type: trojan", `    password: ${yaml(client.shadowsocks_password)}`, `    sni: ${yaml(s.tls_server_name ?? "")}`, "    skip-cert-verify: false", "    udp: true"];
+    case "trojan-tls-websocket": return [...lines, "    type: trojan", `    password: ${yaml(client.shadowsocks_password)}`, "    network: ws", "    tls: true", `    sni: ${yaml(s.tls_server_name ?? "")}`, "    skip-cert-verify: false", "    ws-opts:", `      path: ${yaml(s.websocket_path ?? "/")}`, "      headers:", `        Host: ${yaml(s.websocket_host ?? "")}`];
   }
 }
 
@@ -79,6 +81,9 @@ function uri(client: ClientRecord, node: ExpandedNode): string {
   } else if (node.type === "tuic") {
     url = new URL(`tuic://${client.uuid}:${encodeURIComponent(client.shadowsocks_password)}@${host}:${s.listen_port}`);
     url.searchParams.set("sni", s.tls_server_name ?? ""); url.searchParams.set("congestion_control", "bbr"); url.searchParams.set("udp_relay_mode", "native");
+  } else if (node.type === "trojan-tls-websocket") {
+    url = new URL(`trojan://${encodeURIComponent(client.shadowsocks_password)}@${host}:${s.listen_port}`);
+    url.searchParams.set("security", "tls"); url.searchParams.set("sni", s.tls_server_name ?? ""); url.searchParams.set("type", "ws"); url.searchParams.set("host", s.websocket_host ?? ""); url.searchParams.set("path", s.websocket_path ?? "/");
   } else {
     url = new URL(`trojan://${encodeURIComponent(client.shadowsocks_password)}@${host}:${s.listen_port}`);
     url.searchParams.set("security", "tls"); url.searchParams.set("sni", s.tls_server_name ?? "");

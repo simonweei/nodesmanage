@@ -96,6 +96,7 @@ func installCommand(args []string) {
 	tunnelHostname := flags.String("tunnel-hostname", "", "named tunnel public hostname")
 	tunnelToken := flags.String("tunnel-token", "", "named tunnel token")
 	originPort := flags.Int("origin-port", 0, "local tunnel origin port")
+	connectPort := flags.Int("connect-port", 443, "Cloudflare public HTTPS port")
 	_ = flags.Parse(args)
 	client := &http.Client{Timeout: 90 * time.Second}
 	mode, modeErr := resolveInstallMode(*modeFlag)
@@ -122,6 +123,9 @@ func installCommand(args []string) {
 	} else {
 		if (*tunnelKind != "quick" && *tunnelKind != "named") || *originPort <= 1024 || *originPort > 65535 {
 			fatal("[NM-E202] tunnel deployment requires --tunnel-kind quick|named and --origin-port 1025-65535")
+		}
+		if !validTunnelConnectPort(*tunnelKind, *connectPort) {
+			fatal("[NM-E202] unsupported Cloudflare Tunnel public port")
 		}
 		if *tunnelKind == "named" && (*tunnelHostname == "" || *tunnelToken == "") {
 			fatal("[NM-E202] named tunnel requires --tunnel-hostname and --tunnel-token")
@@ -219,7 +223,7 @@ func installCommand(args []string) {
 		fatal("[NM-E210] prepare A/B configuration: " + err.Error())
 	}
 	reporter.report("runtime_installed", "", "Agent and sing-box installed atomically", "local")
-	if err := registerTicket(client, strings.TrimRight(*server, "/"), *ticket, *name, layout.AgentConfig, platform, layout, *ingressMode, *tunnelKind, *tunnelHostname, *tunnelToken, *originPort); err != nil {
+	if err := registerTicket(client, strings.TrimRight(*server, "/"), *ticket, *name, layout.AgentConfig, platform, layout, *ingressMode, *tunnelKind, *tunnelHostname, *tunnelToken, *originPort, *connectPort); err != nil {
 		reporter.report("failed", "NM-E205", err.Error(), sourceHost(*server))
 		fatal(err.Error())
 	}
@@ -615,7 +619,7 @@ func maintenanceContext(configPath, errorCode string) (config, installLayout, er
 	return cfg, layout, nil
 }
 
-func registerTicket(client *http.Client, server, ticket, name, configPath string, platform platformInfo, layout installLayout, ingressMode, tunnelKind, tunnelHostname, tunnelToken string, originPort int) error {
+func registerTicket(client *http.Client, server, ticket, name, configPath string, platform platformInfo, layout installLayout, ingressMode, tunnelKind, tunnelHostname, tunnelToken string, originPort, connectPort int) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
@@ -647,7 +651,7 @@ func registerTicket(client *http.Client, server, ticket, name, configPath string
 	}
 	cfg := config{ServerURL: server, AgentID: response.AgentID, AgentToken: response.AgentToken, PollSeconds: response.PollSeconds,
 		SingBoxPath: layout.SingBoxPath, CloudflaredPath: layout.CloudflaredPath, ServiceName: "sing-box", RuntimePath: layout.RuntimeConfig, StatePath: layout.StateRoot, InitSystem: platform.InitSystem, InstallMode: platform.InstallMode,
-		IngressMode: ingressMode, TunnelKind: tunnelKind, TunnelHostname: tunnelHostname, TunnelToken: tunnelToken, TunnelOriginPort: originPort}
+		IngressMode: ingressMode, TunnelKind: tunnelKind, TunnelHostname: tunnelHostname, TunnelToken: tunnelToken, TunnelOriginPort: originPort, TunnelConnectPort: connectPort}
 	if cfg.PollSeconds < 15 {
 		cfg.PollSeconds = 60
 	}

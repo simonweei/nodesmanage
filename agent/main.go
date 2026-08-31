@@ -20,27 +20,28 @@ import (
 )
 
 const (
-	version          = "0.7.0"
+	version          = "0.8.0"
 	maxResponseBytes = 3 << 20
 )
 
 type config struct {
-	ServerURL        string `json:"server_url"`
-	AgentID          string `json:"agent_id"`
-	AgentToken       string `json:"agent_token"`
-	PollSeconds      int    `json:"poll_seconds"`
-	SingBoxPath      string `json:"sing_box_path"`
-	CloudflaredPath  string `json:"cloudflared_path,omitempty"`
-	ServiceName      string `json:"service_name"`
-	RuntimePath      string `json:"runtime_config_path"`
-	StatePath        string `json:"state_path"`
-	InitSystem       string `json:"init_system"`
-	InstallMode      string `json:"install_mode"`
-	IngressMode      string `json:"ingress_mode"`
-	TunnelKind       string `json:"tunnel_kind,omitempty"`
-	TunnelHostname   string `json:"tunnel_hostname,omitempty"`
-	TunnelToken      string `json:"tunnel_token,omitempty"`
-	TunnelOriginPort int    `json:"tunnel_origin_port,omitempty"`
+	ServerURL         string `json:"server_url"`
+	AgentID           string `json:"agent_id"`
+	AgentToken        string `json:"agent_token"`
+	PollSeconds       int    `json:"poll_seconds"`
+	SingBoxPath       string `json:"sing_box_path"`
+	CloudflaredPath   string `json:"cloudflared_path,omitempty"`
+	ServiceName       string `json:"service_name"`
+	RuntimePath       string `json:"runtime_config_path"`
+	StatePath         string `json:"state_path"`
+	InitSystem        string `json:"init_system"`
+	InstallMode       string `json:"install_mode"`
+	IngressMode       string `json:"ingress_mode"`
+	TunnelKind        string `json:"tunnel_kind,omitempty"`
+	TunnelHostname    string `json:"tunnel_hostname,omitempty"`
+	TunnelToken       string `json:"tunnel_token,omitempty"`
+	TunnelOriginPort  int    `json:"tunnel_origin_port,omitempty"`
+	TunnelConnectPort int    `json:"tunnel_connect_port,omitempty"`
 }
 
 type permissions struct {
@@ -174,8 +175,14 @@ func (a *agent) loadConfig() error {
 		return errors.New("agent configuration has an invalid ingress_mode")
 	}
 	if a.config.IngressMode == "cloudflare_tunnel" {
+		if a.config.TunnelConnectPort == 0 {
+			a.config.TunnelConnectPort = 443
+		}
 		if a.config.CloudflaredPath == "" || (a.config.TunnelKind != "quick" && a.config.TunnelKind != "named") || a.config.TunnelOriginPort <= 1024 || a.config.TunnelOriginPort > 65535 {
 			return errors.New("agent tunnel configuration is incomplete")
+		}
+		if !validTunnelConnectPort(a.config.TunnelKind, a.config.TunnelConnectPort) {
+			return errors.New("agent tunnel public port is unsupported")
 		}
 		if a.config.TunnelKind == "named" && (a.config.TunnelHostname == "" || a.config.TunnelToken == "") {
 			return errors.New("named tunnel requires hostname and token")
@@ -205,7 +212,7 @@ func (a *agent) sync() error {
 		}
 		request.TunnelError = a.lastTunnelError
 		if request.TunnelRunning && request.TunnelHostname != "" {
-			if err := probeTunnel(a.client, request.TunnelHostname, websocketPath(a.config.RuntimePath)); err == nil {
+			if err := probeTunnel(a.client, request.TunnelHostname, a.config.TunnelConnectPort, websocketPath(a.config.RuntimePath)); err == nil {
 				request.IngressVerified = true
 			} else if request.TunnelError == "" {
 				request.TunnelError = err.Error()

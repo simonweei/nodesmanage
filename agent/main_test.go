@@ -199,6 +199,20 @@ func TestWebsocketPathReadsActiveRuntime(t *testing.T) {
 	}
 }
 
+func TestTunnelConnectPorts(t *testing.T) {
+	if !validTunnelConnectPort("quick", 443) || validTunnelConnectPort("quick", 8443) {
+		t.Fatal("Quick Tunnel must only allow port 443")
+	}
+	for _, port := range []int{443, 2053, 2083, 2087, 2096, 8443} {
+		if !validTunnelConnectPort("named", port) {
+			t.Fatalf("Named Tunnel port %d should be supported", port)
+		}
+	}
+	if validTunnelConnectPort("named", 9443) {
+		t.Fatal("undocumented Named Tunnel port must be rejected")
+	}
+}
+
 func TestResetReleaseLayoutReplacesStaleConfiguration(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink lifecycle is verified on Linux")

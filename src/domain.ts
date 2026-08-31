@@ -3,16 +3,26 @@ import { HttpError } from "./http";
 
 export const PROFILE_TYPES = [
   "vless-reality-vision", "shadowsocks-aead", "vless-tls-websocket", "vless-tls-grpc",
-  "hysteria2", "tuic", "trojan-tls",
+  "hysteria2", "tuic", "trojan-tls", "trojan-tls-websocket",
 ] as const;
 export type ProfileType = typeof PROFILE_TYPES[number];
 export type IngressMode = "direct" | "cloudflare_tunnel";
 export type TunnelKind = "none" | "quick" | "named";
 
 export const ACME_PROFILE_TYPES = [
-  "vless-tls-websocket", "vless-tls-grpc", "hysteria2", "tuic", "trojan-tls",
+  "vless-tls-websocket", "vless-tls-grpc", "hysteria2", "tuic", "trojan-tls", "trojan-tls-websocket",
 ] as const satisfies readonly ProfileType[];
 export type AcmeProfileType = typeof ACME_PROFILE_TYPES[number];
+
+export const TUNNEL_PROFILE_TYPES = [
+  "vless-tls-websocket", "trojan-tls-websocket",
+] as const satisfies readonly ProfileType[];
+export type TunnelProfileType = typeof TUNNEL_PROFILE_TYPES[number];
+
+export const TUNNEL_EDGE_PORTS = {
+  quick: [443],
+  named: [443, 2053, 2083, 2087, 2096, 8443],
+} as const satisfies Record<Exclude<TunnelKind, "none">, readonly number[]>;
 
 export interface ProfileSettings {
   listen_port: number;
@@ -91,6 +101,27 @@ export function isAcmeProfile(type: ProfileType): type is AcmeProfileType {
   return (ACME_PROFILE_TYPES as readonly ProfileType[]).includes(type);
 }
 
+export function isTunnelProfile(type: ProfileType): type is TunnelProfileType {
+  return (TUNNEL_PROFILE_TYPES as readonly ProfileType[]).includes(type);
+}
+
+export function tunnelEdgePort(kind: Exclude<TunnelKind, "none">, value: unknown): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || !(TUNNEL_EDGE_PORTS[kind] as readonly number[]).includes(value)) {
+    throw new HttpError(400, `Cloudflare ${kind} Tunnel 不支持该公网端口`);
+  }
+  return value;
+}
+
+export function ingressCapabilities(): Record<string, unknown> {
+  return {
+    direct: { protocols: [...PROFILE_TYPES] },
+    cloudflare_tunnel: {
+      quick: { protocols: [...TUNNEL_PROFILE_TYPES], edge_ports: [...TUNNEL_EDGE_PORTS.quick], default_edge_port: 443, multiple_protocols: false },
+      named: { protocols: [...TUNNEL_PROFILE_TYPES], edge_ports: [...TUNNEL_EDGE_PORTS.named], default_edge_port: 443, multiple_protocols: false },
+    },
+  };
+}
+
 export function profileNetworks(type: ProfileType): readonly ("tcp" | "udp")[] {
   if (type === "hysteria2" || type === "tuic") return ["udp"];
   if (type === "shadowsocks-aead") return ["tcp", "udp"];
@@ -123,7 +154,7 @@ export function parseProfileSettings(type: ProfileType, input: unknown, ingressM
     result.shadowsocks_server_password = string(value.shadowsocks_server_password, "shadowsocks_server_password", 128);
     return result;
   }
-  if (type === "vless-tls-websocket" && ingressMode === "cloudflare_tunnel") {
+  if (isTunnelProfile(type) && ingressMode === "cloudflare_tunnel") {
     const path = string(value.websocket_path, "websocket_path", 256);
     if (!path.startsWith("/") || /[?#]/.test(path)) throw new HttpError(400, "websocket_path must start with / and cannot contain ? or #");
     result.websocket_path = path;
@@ -131,7 +162,7 @@ export function parseProfileSettings(type: ProfileType, input: unknown, ingressM
   }
   if (isAcmeProfile(type)) {
     acmeSettings(value, result);
-    if (type === "vless-tls-websocket") {
+    if (type === "vless-tls-websocket" || type === "trojan-tls-websocket") {
       const path = string(value.websocket_path, "websocket_path", 256);
       if (!path.startsWith("/") || /[?#]/.test(path)) throw new HttpError(400, "websocket_path must start with / and cannot contain ? or #");
       result.websocket_path = path;
@@ -149,7 +180,7 @@ export function parseProfileSettings(type: ProfileType, input: unknown, ingressM
 }
 
 export async function profileDefaults(type: ProfileType, deploymentMode: "system" | "user" = "system", ingressMode: IngressMode = "direct"): Promise<ProfileSettings> {
-  if (ingressMode === "cloudflare_tunnel" && type === "vless-tls-websocket") {
+  if (ingressMode === "cloudflare_tunnel" && isTunnelProfile(type)) {
     return { listen_port: 18080, websocket_path: "/proxy" };
   }
   if (type === "vless-reality-vision") {
@@ -163,7 +194,7 @@ export async function profileDefaults(type: ProfileType, deploymentMode: "system
   if (type === "shadowsocks-aead") return { listen_port: 8388, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: randomBase64(16) };
   if (isAcmeProfile(type)) {
     const common = { server_address: "", tls_server_name: "", acme_email: "" };
-    if (type === "vless-tls-websocket") return { listen_port: 8443, ...common, websocket_path: "/proxy", websocket_host: common.tls_server_name };
+    if (type === "vless-tls-websocket" || type === "trojan-tls-websocket") return { listen_port: 8443, ...common, websocket_path: "/proxy", websocket_host: common.tls_server_name };
     if (type === "vless-tls-grpc") return { listen_port: 443, ...common, grpc_service_name: "NodeManage" };
     if (type === "hysteria2") return { listen_port: 8443, ...common, hysteria2_obfs_password: randomBase64(24) };
     if (type === "tuic") return { listen_port: 10443, ...common };
@@ -212,6 +243,9 @@ export function compileServerConfig(type: ProfileType, settings: ProfileSettings
       break;
     case "trojan-tls":
       inbound = { ...base, type: "trojan", users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), tls: managedTls(settings), multiplex: { enabled: true } };
+      break;
+    case "trojan-tls-websocket":
+      inbound = { ...base, type: "trojan", users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), ...(ingressMode === "direct" ? { tls: managedTls(settings) } : {}), transport: { type: "ws", path: settings.websocket_path } };
       break;
   }
   return { log: { level: "info", timestamp: true }, inbounds: [inbound], outbounds: [{ type: "direct", tag: "direct" }, { type: "block", tag: "block" }] };

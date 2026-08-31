@@ -134,6 +134,34 @@ describe("control-plane production flow", () => {
     expect(deleted.status).toBe(200);
   });
 
+  it("exposes Tunnel capabilities and validates protocol and edge-port combinations", async () => {
+    const capabilities = await jsonRequest("/api/admin/ingress-capabilities", { headers: { cookie: adminCookie } });
+    expect(await capabilities.json()).toMatchObject({
+      cloudflare_tunnel: {
+        quick: { protocols: ["vless-tls-websocket", "trojan-tls-websocket"], edge_ports: [443] },
+        named: { edge_ports: [443, 2053, 2083, 2087, 2096, 8443] },
+      },
+    });
+    const invalidQuickPort = await jsonRequest("/api/admin/vps", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Invalid Quick", ingress_mode: "cloudflare_tunnel", tunnel_kind: "quick", connect_port: 8443, protocols: [{ type: "vless-tls-websocket", settings: { listen_port: 18080, websocket_path: "/proxy" } }] }),
+    });
+    expect(invalidQuickPort.status).toBe(400);
+    const invalidTunnelProtocol = await jsonRequest("/api/admin/vps", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Invalid gRPC", ingress_mode: "cloudflare_tunnel", tunnel_kind: "quick", connect_port: 443, protocols: [{ type: "vless-tls-grpc", settings: { listen_port: 18080 } }] }),
+    });
+    expect(invalidTunnelProtocol.status).toBe(400);
+    const named = await jsonRequest("/api/admin/vps", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Named Trojan WS", connect_host: "tunnel.example.com", ingress_mode: "cloudflare_tunnel", tunnel_kind: "named", connect_port: 8443, protocols: [{ type: "trojan-tls-websocket", settings: { listen_port: 18081, websocket_path: "/trojan" } }] }),
+    });
+    expect(named.status).toBe(201);
+    const value = await named.json<{ id: string; connect_port: number; origin_port: number }>();
+    expect(value).toMatchObject({ connect_port: 8443, origin_port: 18081 });
+    expect((await jsonRequest(`/api/admin/vps/${value.id}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
+  });
+
   it("creates subscriptions, automatically publishes and serves only applied healthy nodes", async () => {
     const group = await jsonRequest("/api/admin/subscription-groups", {
       method: "POST",

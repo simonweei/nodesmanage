@@ -129,15 +129,34 @@ func websocketPath(runtimePath string) string {
 	return "/"
 }
 
-func probeTunnel(client *http.Client, hostname, path string) error {
-	if _, err := url.ParseRequestURI("https://" + hostname + path); err != nil {
+func validTunnelConnectPort(kind string, port int) bool {
+	if kind == "quick" {
+		return port == 443
+	}
+	if kind != "named" {
+		return false
+	}
+	for _, allowed := range []int{443, 2053, 2083, 2087, 2096, 8443} {
+		if port == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+func probeTunnel(client *http.Client, hostname string, port int, path string) error {
+	endpointHost := hostname
+	if port != 443 {
+		endpointHost = fmt.Sprintf("%s:%d", hostname, port)
+	}
+	if _, err := url.ParseRequestURI("https://" + endpointHost + path); err != nil {
 		return fmt.Errorf("invalid tunnel endpoint: %w", err)
 	}
 	key := make([]byte, 16)
 	if _, err := rand.Read(key); err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodGet, "https://"+hostname+path, nil)
+	req, err := http.NewRequest(http.MethodGet, "https://"+endpointHost+path, nil)
 	if err != nil {
 		return err
 	}

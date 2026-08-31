@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
-import { compileServerConfig, compileServerProfiles, parseProfileSettings, type ProfileSettings, type ProfileType } from "../src/domain";
+import { compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
 import { readJsonObject } from "../src/http";
 import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src/subscriptions";
 
@@ -16,6 +16,7 @@ const cases: [ProfileType, ProfileSettings, string][] = [
   ["hysteria2", { listen_port: 8443, server_address: "hy2.example.net", tls_server_name: "hy2.example.net", acme_email: "ops@example.net", hysteria2_obfs_password: "obfs-secret" }, "hysteria2"],
   ["tuic", { listen_port: 10443, server_address: "tuic.example.net", tls_server_name: "tuic.example.net", acme_email: "ops@example.net" }, "tuic"],
   ["trojan-tls", { listen_port: 9443, server_address: "trojan.example.net", tls_server_name: "trojan.example.net", acme_email: "ops@example.net" }, "trojan"],
+  ["trojan-tls-websocket", { listen_port: 9444, server_address: "trojan-ws.example.net", tls_server_name: "trojan-ws.example.net", acme_email: "ops@example.net", websocket_path: "/trojan", websocket_host: "trojan-ws.example.net" }, "trojan"],
 ];
 
 describe("production Protocol Profiles", () => {
@@ -55,10 +56,10 @@ describe("subscriptions", () => {
 describe("multiple protocols on one VPS", () => {
   it("compiles every selected protocol and expands them in subscriptions", () => {
     const profiles = cases.map(([type, settings]) => ({ type, settings }));
-    expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(7);
+    expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(8);
     const node = { id: "multi", name: "Tokyo", connect_host: "node.example.com", connect_port: 443, ingress_mode: "direct" as const, type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
-    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(7);
-    expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(7);
+    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(8);
+    expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(8);
   });
 
   it("terminates TLS at Cloudflare and publishes the verified hostname", () => {
@@ -68,6 +69,18 @@ describe("multiple protocols on one VPS", () => {
     expect(inbound).not.toHaveProperty("tls");
     const node = { id: "tunnel", name: "Tunnel", connect_host: "random.trycloudflare.com", connect_port: 443, ingress_mode: "cloudflare_tunnel" as const, type: "vless-tls-websocket" as const, settings_json: JSON.stringify(settings) };
     expect(uriSubscription(client, [node])).toContain("random.trycloudflare.com:443");
+  });
+
+  it("supports both public WebSocket protocols and only documented HTTPS edge ports", () => {
+    const settings = parseProfileSettings("trojan-tls-websocket", { listen_port: 18081, websocket_path: "/trojan" }, "cloudflare_tunnel");
+    const inbound = (compileServerConfig("trojan-tls-websocket", settings, [client], "cloudflare_tunnel").inbounds as Record<string, unknown>[])[0];
+    expect(inbound).toMatchObject({ type: "trojan", listen: "127.0.0.1", listen_port: 18081, transport: { type: "ws", path: "/trojan" } });
+    expect(inbound).not.toHaveProperty("tls");
+    expect(tunnelEdgePort("quick", 443)).toBe(443);
+    expect(tunnelEdgePort("named", 8443)).toBe(8443);
+    expect(() => tunnelEdgePort("quick", 8443)).toThrow("不支持");
+    expect(() => tunnelEdgePort("named", 9443)).toThrow("不支持");
+    expect(ingressCapabilities()).toMatchObject({ cloudflare_tunnel: { quick: { protocols: ["vless-tls-websocket", "trojan-tls-websocket"], edge_ports: [443] }, named: { edge_ports: [443, 2053, 2083, 2087, 2096, 8443] } } });
   });
 });
 
