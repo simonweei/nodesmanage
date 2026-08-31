@@ -4,12 +4,12 @@ export const SING_BOX_VERSION = "1.13.12";
 export const CLOUDFLARED_VERSION = "2026.8.2";
 export const RELEASE_DIGESTS = {
   "amd64": {
-    "agentSha256": "0c326c21772e6735b33500cd644efdfb90902b99491dcda66ae90a1c4d48e837",
+    "agentSha256": "38a8146d26d483f380fc9c91f7a530dfd504734e9f00ff3b5a6861268a873d14",
     "singBoxSha256": "1540533adb3df24f5ad5f14b5c7ca3dbc2401b10a1c1eb278fcadcada47ec6c4",
     "cloudflaredSha256": "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2"
   },
   "arm64": {
-    "agentSha256": "56c5fa46789dd09e0a4bbf99500c8a297b357135cbc19f1672af18fe258a24fc",
+    "agentSha256": "4914a299c1b9b6fdf74b78de714d654abfd8b2d3e416aecec3e376498dc1bd14",
     "singBoxSha256": "1ffa3b48ad6fa98f9fd810482e39bdd5b6157782ef11ce37d67bdcfd9338547a",
     "cloudflaredSha256": "7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790"
   }

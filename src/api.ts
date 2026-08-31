@@ -569,7 +569,8 @@ async function registerAgent(request: Request, env: Env): Promise<Response> {
       SELECT 1 FROM install_events WHERE node_id=? AND stage='registered' AND created_at>datetime('now','-1 minute'))`).bind(use.node_id, use.node_id));
   if (oldAgent?.agent_id && oldAgent.agent_id !== id) statements.push(env.DB.prepare("DELETE FROM agents WHERE id=?").bind(oldAgent.agent_id));
   await env.DB.batch(statements);
-  return json({ agent_id: id, agent_token: token, poll_seconds: Number(env.AGENT_POLL_SECONDS) || 60, idempotent: Boolean(use.agent_id) }, { status: use.agent_id ? 200 : 201 });
+  const published = await publishAgents([id], env, "Agent registered");
+  return json({ agent_id: id, agent_token: token, poll_seconds: Number(env.AGENT_POLL_SECONDS) || 60, idempotent: Boolean(use.agent_id), published }, { status: use.agent_id ? 200 : 201 });
 }
 
 async function setEnabled(resource: string, id: string, request: Request, env: Env): Promise<Response> {

@@ -181,14 +181,54 @@ func TestQuickTunnelHostnameUsesLatestLogEntry(t *testing.T) {
 	state := t.TempDir()
 	cfg := config{StatePath: state}
 	log := "INF Your quick Tunnel has been created! Visit it at https://first.trycloudflare.com\nINF https://latest-name.trycloudflare.com\n"
-	if err := os.WriteFile(tunnelLogPath(cfg), []byte(log), 0600); err != nil { t.Fatal(err) }
-	if got := quickTunnelHostname(cfg); got != "latest-name.trycloudflare.com" { t.Fatalf("hostname = %q", got) }
+	if err := os.WriteFile(tunnelLogPath(cfg), []byte(log), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := quickTunnelHostname(cfg); got != "latest-name.trycloudflare.com" {
+		t.Fatalf("hostname = %q", got)
+	}
 }
 
 func TestWebsocketPathReadsActiveRuntime(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"inbounds":[{"transport":{"type":"ws","path":"/edge"}}]}`), 0600); err != nil { t.Fatal(err) }
-	if got := websocketPath(path); got != "/edge" { t.Fatalf("path = %q", got) }
+	if err := os.WriteFile(path, []byte(`{"inbounds":[{"transport":{"type":"ws","path":"/edge"}}]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := websocketPath(path); got != "/edge" {
+		t.Fatalf("path = %q", got)
+	}
+}
+
+func TestResetReleaseLayoutReplacesStaleConfiguration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink lifecycle is verified on Linux")
+	}
+	root := t.TempDir()
+	runtimePath := filepath.Join(root, "runtime", "config.json")
+	releasesRoot := filepath.Join(root, "state", "releases")
+	stale := filepath.Join(releasesRoot, "r2")
+	if err := os.MkdirAll(stale, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "config.json"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(runtimePath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(stale, "config.json"), runtimePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetReleaseLayout(runtimePath, releasesRoot); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(runtimePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != minimalRuntimeConfig {
+		t.Fatalf("runtime config = %q", data)
+	}
 }
 
 func TestPostJSON(t *testing.T) {

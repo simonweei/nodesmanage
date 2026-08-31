@@ -214,22 +214,14 @@ func installCommand(args []string) {
 			fatal("[NM-E210] install runtime: " + err.Error())
 		}
 	}
-	if _, err := os.Stat(layout.RuntimeConfig); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(layout.RuntimeConfig, []byte(minimalRuntimeConfig), 0600); err != nil {
-			reporter.report("failed", "NM-E210", err.Error(), "local")
-			fatal("[NM-E210] write runtime config: " + err.Error())
-		}
-	}
-	if err := repairReleaseLayout(layout.RuntimeConfig, layout.ReleasesRoot); err != nil {
+	if err := resetReleaseLayout(layout.RuntimeConfig, layout.ReleasesRoot); err != nil {
 		reporter.report("failed", "NM-E210", err.Error(), "local")
 		fatal("[NM-E210] prepare A/B configuration: " + err.Error())
 	}
 	reporter.report("runtime_installed", "", "Agent and sing-box installed atomically", "local")
-	if _, err := os.Stat(layout.AgentConfig); errors.Is(err, os.ErrNotExist) {
-		if err := registerTicket(client, strings.TrimRight(*server, "/"), *ticket, *name, layout.AgentConfig, platform, layout, *ingressMode, *tunnelKind, *tunnelHostname, *tunnelToken, *originPort); err != nil {
-			reporter.report("failed", "NM-E205", err.Error(), sourceHost(*server))
-			fatal(err.Error())
-		}
+	if err := registerTicket(client, strings.TrimRight(*server, "/"), *ticket, *name, layout.AgentConfig, platform, layout, *ingressMode, *tunnelKind, *tunnelHostname, *tunnelToken, *originPort); err != nil {
+		reporter.report("failed", "NM-E205", err.Error(), sourceHost(*server))
+		fatal(err.Error())
 	}
 	if err := writeServices(platform.InitSystem, layout); err != nil {
 		reporter.report("failed", "NM-E213", err.Error(), "local")
@@ -362,6 +354,31 @@ func repairReleaseLayout(runtimePath, releasesRoot string) error {
 		}
 	}
 	return ensureReleaseLayout(runtimePath, releasesRoot)
+}
+
+func resetReleaseLayout(runtimePath, releasesRoot string) error {
+	root := filepath.Dir(releasesRoot)
+	bootstrapDir := filepath.Join(releasesRoot, "bootstrap")
+	if err := os.MkdirAll(bootstrapDir, 0700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(bootstrapDir, "config.json"), []byte(minimalRuntimeConfig), 0600); err != nil {
+		return err
+	}
+	if err := atomicSymlink(bootstrapDir, filepath.Join(root, "current")); err != nil {
+		return err
+	}
+	if err := os.Remove(runtimePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(runtimePath), 0700); err != nil {
+		return err
+	}
+	if err := os.Symlink(filepath.Join(root, "current", "config.json"), runtimePath); err != nil {
+		return err
+	}
+	_ = os.Remove(runtimePath + ".revision")
+	return nil
 }
 
 func upgradeCommand(args []string) {
