@@ -48,7 +48,8 @@ describe("control-plane production flow", () => {
       body: JSON.stringify({ name: "Tokyo 1", region: "JP", connect_host: "node.example.com", ingress_mode: "direct", protocols: [{ type: "vless-reality-vision", settings: { listen_port: 443 } }] }),
     });
     expect(created.status).toBe(201);
-    const value = await created.json<{ id: string; ticket: string }>();
+    const value = await created.json<{ id: string; ticket: string; deployment_policy: string; deployment_mode: string; system_required: boolean }>();
+    expect(value).toMatchObject({ deployment_policy: "auto", deployment_mode: "system", system_required: true });
     nodeId = value.id;
     ticket = value.ticket;
 
@@ -79,6 +80,58 @@ describe("control-plane production flow", () => {
 
     const stolen = await jsonRequest("/api/agent/register", { method: "POST", body: JSON.stringify({ ...registration, claim: "22".repeat(32) }) });
     expect(stolen.status).toBe(409);
+  });
+
+  it("resolves an auto high-port profile to the installer's user mode", async () => {
+    const defaults = await jsonRequest("/api/admin/profile-defaults?type=vless-reality-vision&mode=auto", { headers: { cookie: adminCookie } });
+    expect(await defaults.json()).toMatchObject({ deployment_policy: "auto", deployment_mode: "user", settings: { listen_port: 8443 } });
+    const created = await jsonRequest("/api/admin/vps", {
+      method: "POST",
+      headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Auto User", connect_host: "user.example.com", deployment_policy: "auto", ingress_mode: "direct", protocols: [{ type: "vless-reality-vision", settings: { listen_port: 8443 } }] }),
+    });
+    expect(created.status).toBe(201);
+    const value = await created.json<{ id: string; ticket: string; deployment_policy: string; system_required: boolean }>();
+    expect(value).toMatchObject({ deployment_policy: "auto", system_required: false });
+
+    const registered = await jsonRequest("/api/agent/register", {
+      method: "POST",
+      body: JSON.stringify({
+        ticket: value.ticket,
+        claim: "33".repeat(32),
+        name: "Auto User",
+        hostname: "host-user",
+        architecture: "amd64",
+        os: "linux",
+        distro: "debian",
+        distro_version: "13",
+        libc: "glibc",
+        init_system: "systemd",
+        install_mode: "user",
+      }),
+    });
+    expect(registered.status).toBe(201);
+    expect(await testEnv.DB.prepare("SELECT deployment_policy,deployment_mode FROM nodes WHERE id=?").bind(value.id).first()).toMatchObject({ deployment_policy: "auto", deployment_mode: "user" });
+    const conflictingRetry = await jsonRequest("/api/agent/register", {
+      method: "POST",
+      body: JSON.stringify({
+        ticket: value.ticket,
+        claim: "33".repeat(32),
+        name: "Auto User",
+        hostname: "host-user",
+        architecture: "amd64",
+        os: "linux",
+        distro: "debian",
+        distro_version: "13",
+        libc: "glibc",
+        init_system: "systemd",
+        install_mode: "system",
+      }),
+    });
+    expect(conflictingRetry.status).toBe(409);
+
+    const deleted = await jsonRequest(`/api/admin/vps/${value.id}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } });
+    expect(deleted.status).toBe(200);
   });
 
   it("creates subscriptions, automatically publishes and serves only applied healthy nodes", async () => {

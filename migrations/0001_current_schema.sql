@@ -64,6 +64,7 @@ CREATE TABLE nodes (
   ingress_verified_at TEXT,
   last_ingress_error TEXT,
   deployment_mode TEXT NOT NULL DEFAULT 'system' CHECK (deployment_mode IN ('system', 'user')),
+  deployment_policy TEXT NOT NULL DEFAULT 'system' CHECK (deployment_policy IN ('auto', 'system', 'user')),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
   retiring INTEGER NOT NULL DEFAULT 0 CHECK (retiring IN (0, 1)),

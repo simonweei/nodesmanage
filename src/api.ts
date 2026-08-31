@@ -17,6 +17,8 @@ interface AdminGroupRow extends Record<string, unknown> { id: string; total_coun
 interface GroupNodeRow extends Record<string, unknown> { group_id: string; node_id: string }
 interface AdminSubscriptionRow extends Record<string, unknown> { id: string; group_id: string; client_id: string; client_name: string; enabled: number }
 interface RevisionClientRow { id: string; name: string; uuid: string; shadowsocks_password: string }
+type DeploymentMode = "system" | "user";
+type DeploymentPolicy = "auto" | DeploymentMode;
 
 function routeParam(path: string, pattern: RegExp): string | null {
   return pattern.exec(path)?.[1] ?? null;
@@ -28,7 +30,7 @@ async function listAdmin(request: Request, env: Env): Promise<Response> {
   const offset = Math.min(10_000, Math.max(0, Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0));
   const statements = [
     env.DB.prepare(`SELECT n.id,n.agent_id,n.profile_id,n.name,n.region,
-      n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,n.edge_tls,n.ingress_status,n.ingress_verified_at,n.last_ingress_error,n.deployment_mode,n.enabled,n.draft,n.retiring,n.install_stage,n.last_install_error_code,n.last_install_message,n.last_install_source,n.last_install_at,n.created_at,n.updated_at,
+      n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,n.edge_tls,n.ingress_status,n.ingress_verified_at,n.last_ingress_error,n.deployment_mode,n.deployment_policy,n.enabled,n.draft,n.retiring,n.install_stage,n.last_install_error_code,n.last_install_message,n.last_install_source,n.last_install_at,n.created_at,n.updated_at,
       p.type,p.settings_json,p.protocols_json,a.hostname,a.os,a.distro,a.distro_version,a.architecture,a.libc,a.init_system,a.install_mode,a.agent_version,a.singbox_version,a.cloudflared_version,a.observed_egress_ip,a.tunnel_running,a.tunnel_hostname,a.tunnel_error,
       a.current_revision,a.desired_revision,a.singbox_running,a.cpu_usage_percent,a.uptime_seconds,a.memory_total_bytes,a.memory_used_bytes,
       a.disk_total_bytes,a.disk_used_bytes,a.permissions_json,a.last_error,a.last_seen,COUNT(*) OVER() AS total_count
@@ -79,10 +81,14 @@ function submittedSettings(body: Record<string, unknown>): Record<string, unknow
   return body.settings && typeof body.settings === "object" && !Array.isArray(body.settings) ? body.settings as Record<string, unknown> : {};
 }
 
-function deploymentMode(value: unknown): "system" | "user" {
-  if (value === undefined || value === null || value === "") return "system";
-  if (value !== "system" && value !== "user") throw new HttpError(400, "deployment_mode must be system or user");
+function deploymentPolicy(value: unknown): DeploymentPolicy {
+  if (value === undefined || value === null || value === "") return "auto";
+  if (value !== "auto" && value !== "system" && value !== "user") throw new HttpError(400, "deployment_policy must be auto, system or user");
   return value;
+}
+
+function configurationMode(policy: DeploymentPolicy): DeploymentMode {
+  return policy === "system" ? "system" : "user";
 }
 
 function ingressMode(value: unknown): IngressMode {
@@ -105,7 +111,7 @@ function endpointHost(value: unknown, required: boolean): string {
   return host;
 }
 
-function validateDeploymentPorts(mode: "system" | "user", ingress: IngressMode, profiles: ProtocolProfile[]): void {
+function validateDeploymentPorts(mode: DeploymentPolicy, ingress: IngressMode, profiles: ProtocolProfile[]): void {
   if (ingress === "cloudflare_tunnel") {
     if (profiles.length !== 1 || profiles[0]?.type !== "vless-tls-websocket") throw new HttpError(400, "Cloudflare Tunnel 模式当前仅支持一个 VLESS WebSocket 协议");
     if ((profiles[0]?.settings.listen_port ?? 0) <= 1024) throw new HttpError(400, "Cloudflare Tunnel 本地端口必须在 1025-65535 范围内");
@@ -132,7 +138,11 @@ function validateDeploymentPorts(mode: "system" | "user", ingress: IngressMode, 
   }
 }
 
-async function submittedProtocols(body: Record<string, unknown>, mode: "system" | "user", ingress: IngressMode): Promise<ProtocolProfile[]> {
+function requiresSystemDeployment(ingress: IngressMode, profiles: ProtocolProfile[]): boolean {
+  return ingress === "direct" && profiles.some((profile) => profile.settings.listen_port <= 1024 || isAcmeProfile(profile.type));
+}
+
+async function submittedProtocols(body: Record<string, unknown>, policy: DeploymentPolicy, ingress: IngressMode): Promise<ProtocolProfile[]> {
   if (!Array.isArray(body.protocols) || body.protocols.length === 0 || body.protocols.length > 8) {
     throw new HttpError(400, "protocols must be a non-empty array");
   }
@@ -145,9 +155,10 @@ async function submittedProtocols(body: Record<string, unknown>, mode: "system" 
     if (types.has(type)) throw new HttpError(400, "protocols cannot contain duplicates");
     types.add(type);
     const submitted = value.settings && typeof value.settings === "object" && !Array.isArray(value.settings) ? value.settings as Record<string, unknown> : {};
-    profiles.push({ type, settings: parseProfileSettings(type, { ...(await profileDefaults(type, mode, ingress)), ...submitted }, ingress) });
+    const defaultsMode: DeploymentMode = policy === "auto" ? (isAcmeProfile(type) ? "system" : "user") : policy;
+    profiles.push({ type, settings: parseProfileSettings(type, { ...(await profileDefaults(type, defaultsMode, ingress)), ...submitted }, ingress) });
   }
-  validateDeploymentPorts(mode, ingress, profiles);
+  validateDeploymentPorts(policy, ingress, profiles);
   return profiles;
 }
 
@@ -270,12 +281,14 @@ async function createVps(request: Request, env: Env): Promise<Response> {
   const profileId = randomUuid();
   const name = stringField(body, "name", { required: true, max: 100 });
   const region = stringField(body, "region", { max: 100 });
-  const mode = deploymentMode(body.deployment_mode);
+  const policy = deploymentPolicy(body.deployment_policy ?? body.deployment_mode);
   const ingress = ingressMode(body.ingress_mode);
   const kind = tunnelKind(body.tunnel_kind, ingress);
   const connectHost = endpointHost(body.connect_host, ingress === "direct" || kind === "named");
-  const protocols = await submittedProtocols(body, mode, ingress);
-  validateDeploymentPorts(mode, ingress, protocols);
+  const protocols = await submittedProtocols(body, policy, ingress);
+  validateDeploymentPorts(policy, ingress, protocols);
+  const systemRequired = requiresSystemDeployment(ingress, protocols);
+  const mode: DeploymentMode = policy === "auto" ? (systemRequired ? "system" : "user") : policy;
   const { type, settings } = protocols[0]!;
   const connectPort = ingress === "cloudflare_tunnel" ? 443 : settings.listen_port;
   const originPort = settings.listen_port;
@@ -284,47 +297,50 @@ async function createVps(request: Request, env: Env): Promise<Response> {
   const ticket = randomToken(24);
   await env.DB.batch([
     env.DB.prepare("INSERT INTO profiles(id,name,type,settings_json,protocols_json) VALUES(?,?,?,?,?)").bind(profileId, name, type, JSON.stringify(settings), JSON.stringify(protocols)),
-    env.DB.prepare("INSERT INTO nodes(id,profile_id,name,region,ingress_mode,tunnel_kind,connect_host,connect_port,origin_port,edge_tls,ingress_status,deployment_mode,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,1)").bind(id, profileId, name, region, ingress, kind, connectHost, connectPort, originPort, ingress === "cloudflare_tunnel" ? 1 : 0, ingressStatus, mode),
+    env.DB.prepare("INSERT INTO nodes(id,profile_id,name,region,ingress_mode,tunnel_kind,connect_host,connect_port,origin_port,edge_tls,ingress_status,deployment_mode,deployment_policy,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)").bind(id, profileId, name, region, ingress, kind, connectHost, connectPort, originPort, ingress === "cloudflare_tunnel" ? 1 : 0, ingressStatus, mode, policy),
     env.DB.prepare("INSERT INTO install_tickets(id,node_id,token_hash,expires_at) VALUES(?,?,?,datetime('now','+15 minutes'))").bind(installTicketId, id, await sha256Hex(ticket)),
     env.DB.prepare("INSERT INTO install_events(node_id,stage,message,source) VALUES(?,'ticket_created','Install ticket created','worker')").bind(id),
   ]);
-  return json({ id, name, region, ingress_mode: ingress, tunnel_kind: kind, connect_host: connectHost, connect_port: connectPort, origin_port: originPort, deployment_mode: mode, type, settings, protocols, ticket, expires_in_seconds: 900 }, { status: 201 });
+  return json({ id, name, region, ingress_mode: ingress, tunnel_kind: kind, connect_host: connectHost, connect_port: connectPort, origin_port: originPort, deployment_policy: policy, deployment_mode: mode, system_required: systemRequired, type, settings, protocols, ticket, expires_in_seconds: 900 }, { status: 201 });
 }
 
 async function updateVps(id: string, request: Request, env: Env): Promise<Response> {
-  const current = await env.DB.prepare("SELECT n.profile_id,n.agent_id,n.name,n.deployment_mode,n.ingress_mode,n.tunnel_kind,n.connect_host,p.type,p.settings_json,p.protocols_json FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.id=?").bind(id).first<ProfileRow & { profile_id: string; agent_id: string | null; deployment_mode: "system" | "user"; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string }>();
+  const current = await env.DB.prepare("SELECT n.profile_id,n.agent_id,n.name,n.deployment_mode,n.deployment_policy,n.ingress_mode,n.tunnel_kind,n.connect_host,p.type,p.settings_json,p.protocols_json FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.id=?").bind(id).first<ProfileRow & { profile_id: string; agent_id: string | null; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string }>();
   if (!current) throw new HttpError(404, "VPS not found");
   const body = await readJsonObject(request);
   const name = stringField(body, "name", { required: true, max: 100 });
   const region = stringField(body, "region", { max: 100 });
-  const mode = body.deployment_mode === undefined ? current.deployment_mode : deploymentMode(body.deployment_mode);
+  const policy = body.deployment_policy === undefined && body.deployment_mode === undefined ? current.deployment_policy : deploymentPolicy(body.deployment_policy ?? body.deployment_mode);
   const ingress = body.ingress_mode === undefined ? current.ingress_mode : ingressMode(body.ingress_mode);
   const kind = tunnelKind(body.tunnel_kind ?? current.tunnel_kind, ingress);
-  if (current.agent_id && (mode !== current.deployment_mode || ingress !== current.ingress_mode || kind !== current.tunnel_kind)) throw new HttpError(409, "已安装 VPS 不能切换部署或入口模式，请先安全退役后重新创建");
+  if (current.agent_id && (policy !== current.deployment_policy || ingress !== current.ingress_mode || kind !== current.tunnel_kind)) throw new HttpError(409, "已安装 VPS 不能切换部署或入口模式，请先安全退役后重新创建");
   const submittedHost = body.connect_host === undefined ? current.connect_host : body.connect_host;
   const connectHost = kind === "quick" ? current.connect_host : endpointHost(submittedHost, ingress === "direct" || kind === "named");
-  const protocols = await submittedProtocols(body, mode, ingress);
-  validateDeploymentPorts(mode, ingress, protocols);
+  const protocols = await submittedProtocols(body, policy, ingress);
+  validateDeploymentPorts(policy, ingress, protocols);
+  const systemRequired = requiresSystemDeployment(ingress, protocols);
+  const mode: DeploymentMode = current.agent_id ? current.deployment_mode : policy === "auto" ? (systemRequired ? "system" : "user") : policy;
+  if (current.agent_id) validateDeploymentPorts(mode, ingress, protocols);
   const { type, settings } = protocols[0]!;
   const connectPort = ingress === "cloudflare_tunnel" ? 443 : settings.listen_port;
   const originPort = settings.listen_port;
   const ingressStatus = ingress === "direct" ? "configured" : (current.connect_host ? "connected" : "pending");
   const statements = [
     env.DB.prepare("UPDATE profiles SET name=?,type=?,settings_json=?,protocols_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, type, JSON.stringify(settings), JSON.stringify(protocols), current.profile_id),
-    env.DB.prepare("UPDATE nodes SET name=?,region=?,ingress_mode=?,tunnel_kind=?,connect_host=?,connect_port=?,origin_port=?,edge_tls=?,ingress_status=?,ingress_verified_at=NULL,last_ingress_error=NULL,deployment_mode=?,draft=1,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, ingress, kind, connectHost, connectPort, originPort, ingress === "cloudflare_tunnel" ? 1 : 0, ingressStatus, mode, id),
+    env.DB.prepare("UPDATE nodes SET name=?,region=?,ingress_mode=?,tunnel_kind=?,connect_host=?,connect_port=?,origin_port=?,edge_tls=?,ingress_status=?,ingress_verified_at=NULL,last_ingress_error=NULL,deployment_mode=?,deployment_policy=?,draft=1,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, ingress, kind, connectHost, connectPort, originPort, ingress === "cloudflare_tunnel" ? 1 : 0, ingressStatus, mode, policy, id),
   ];
   const queue = enqueueReconcileStatement(env, current.agent_id ? [current.agent_id] : [], "VPS profile updated");
   if (queue) statements.push(queue);
   await env.DB.batch(statements);
   const published = current.agent_id ? await publishAgents([current.agent_id], env, "VPS profile updated") : [];
-  return json({ id, name, region, ingress_mode: ingress, tunnel_kind: kind, connect_host: connectHost, connect_port: connectPort, origin_port: originPort, deployment_mode: mode, type, settings, protocols, published });
+  return json({ id, name, region, ingress_mode: ingress, tunnel_kind: kind, connect_host: connectHost, connect_port: connectPort, origin_port: originPort, deployment_policy: policy, deployment_mode: mode, system_required: systemRequired, type, settings, protocols, published });
 }
 
 async function vpsInstall(id: string, env: Env): Promise<Response> {
-  const node = await env.DB.prepare("SELECT name,deployment_mode,ingress_mode,tunnel_kind,connect_host,origin_port FROM nodes WHERE id=? AND enabled=1").bind(id).first<{ name: string; deployment_mode: "system" | "user"; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string; origin_port: number }>();
+  const node = await env.DB.prepare("SELECT n.name,n.deployment_mode,n.deployment_policy,n.ingress_mode,n.tunnel_kind,n.connect_host,n.origin_port,p.type,p.settings_json,p.protocols_json FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.id=? AND n.enabled=1").bind(id).first<ProfileRow & { name: string; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string; origin_port: number }>();
   if (!node) throw new HttpError(404, "VPS not found");
   const install = await freshInstallTicket(id, env);
-  return json({ id, ticket: install.ticket, deployment_mode: node.deployment_mode, ingress_mode: node.ingress_mode, tunnel_kind: node.tunnel_kind, connect_host: node.connect_host, origin_port: node.origin_port, expires_in_seconds: 900 });
+  return json({ id, ticket: install.ticket, deployment_policy: node.deployment_policy, deployment_mode: node.deployment_mode, system_required: requiresSystemDeployment(node.ingress_mode, storedProtocols(node)), ingress_mode: node.ingress_mode, tunnel_kind: node.tunnel_kind, connect_host: node.connect_host, origin_port: node.origin_port, expires_in_seconds: 900 });
 }
 
 async function createSubscriptionGroup(request: Request, env: Env): Promise<Response> {
@@ -524,11 +540,18 @@ async function registerAgent(request: Request, env: Env): Promise<Response> {
   const claimHash = await sha256Hex(claim);
   const id = await hmacHex(env.AGENT_TOKEN_SECRET, `agent-id:${ticket}:${claim}`);
   const token = await hmacHex(env.AGENT_TOKEN_SECRET, `agent-token:${ticket}:${claim}`);
-  let use = await env.DB.prepare(`SELECT t.id,t.node_id,t.agent_id,t.claim_hash,t.used_at,n.deployment_mode FROM install_tickets t JOIN nodes n ON n.id=t.node_id
+  let use = await env.DB.prepare(`SELECT t.id,t.node_id,t.agent_id,t.claim_hash,t.used_at,n.deployment_mode,n.deployment_policy,n.ingress_mode,p.type,p.settings_json,p.protocols_json FROM install_tickets t JOIN nodes n ON n.id=t.node_id JOIN profiles p ON p.id=n.profile_id
     WHERE t.token_hash=? AND t.expires_at>CURRENT_TIMESTAMP AND n.enabled=1`)
-    .bind(ticketHash).first<{ id: string; node_id: string; agent_id: string | null; claim_hash: string | null; used_at: string | null; deployment_mode: string }>();
+    .bind(ticketHash).first<ProfileRow & { id: string; node_id: string; agent_id: string | null; claim_hash: string | null; used_at: string | null; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode }>();
   if (!use) throw new HttpError(401, "invalid or expired install ticket");
-  if (use.deployment_mode !== installMode) throw new HttpError(409, `installer mode ${installMode} does not match VPS deployment mode ${use.deployment_mode}`);
+  if (use.deployment_policy !== "auto" && use.deployment_policy !== installMode) throw new HttpError(409, `installer mode ${installMode} does not match VPS deployment policy ${use.deployment_policy}`);
+  if (use.agent_id && use.deployment_mode !== installMode) throw new HttpError(409, `install ticket is already bound to ${use.deployment_mode} mode`);
+  try {
+    validateDeploymentPorts(installMode, use.ingress_mode, storedProtocols(use));
+  } catch (error) {
+    if (error instanceof HttpError) throw new HttpError(409, `installer mode ${installMode} is incompatible with this VPS profile: ${error.message}`);
+    throw error;
+  }
   const claimed = await env.DB.prepare(`UPDATE install_tickets SET claim_hash=COALESCE(claim_hash,?)
     WHERE id=? AND (claim_hash IS NULL OR claim_hash=?) RETURNING id`).bind(claimHash, use.id, claimHash).first();
   if (!claimed) throw new HttpError(409, "install ticket was claimed by another installer");
@@ -562,8 +585,8 @@ async function registerAgent(request: Request, env: Env): Promise<Response> {
       id,
     ),
   ];
-  statements.push(env.DB.prepare(`UPDATE nodes SET agent_id=?,install_stage='registered',last_install_error_code=NULL,last_install_message='Agent registered',last_install_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
-    .bind(id, use.node_id));
+  statements.push(env.DB.prepare(`UPDATE nodes SET agent_id=?,deployment_mode=(SELECT install_mode FROM agents WHERE id=?),install_stage='registered',last_install_error_code=NULL,last_install_message='Agent registered',last_install_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .bind(id, id, use.node_id));
   statements.push(env.DB.prepare(`INSERT INTO install_events(node_id,stage,message,source)
     SELECT ?,'registered','Agent registered','worker' WHERE NOT EXISTS(
       SELECT 1 FROM install_events WHERE node_id=? AND stage='registered' AND created_at>datetime('now','-1 minute'))`).bind(use.node_id, use.node_id));
@@ -768,9 +791,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if (path === "/api/admin/state" && request.method === "GET") return listAdmin(request, env);
   if (path === "/api/admin/profile-defaults" && request.method === "GET") {
     const type = parseProfileType(url.searchParams.get("type"));
-    const mode = deploymentMode(url.searchParams.get("mode"));
+    const policy = deploymentPolicy(url.searchParams.get("mode"));
+    const mode: DeploymentMode = policy === "auto" && isAcmeProfile(type) ? "system" : configurationMode(policy);
     const ingress = ingressMode(url.searchParams.get("ingress") ?? "direct");
-    return json({ type, deployment_mode: mode, ingress_mode: ingress, settings: await profileDefaults(type, mode, ingress) });
+    return json({ type, deployment_policy: policy, deployment_mode: mode, system_required: policy === "auto" && ingress === "direct" && isAcmeProfile(type), ingress_mode: ingress, settings: await profileDefaults(type, mode, ingress) });
   }
   if (path === "/api/admin/subscription-groups" && request.method === "POST") return createSubscriptionGroup(request, env);
   if (path === "/api/admin/vps" && request.method === "POST") return createVps(request, env);

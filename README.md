@@ -67,7 +67,7 @@ AGENT_TOKEN_SECRET="至少三十二位的独立随机值"
 管理界面只有 **VPS** 和 **订阅** 两个主版块，桌面端使用紧凑表格，移动端自动切换为卡片和全屏编辑抽屉。
 
 1. 在 VPS 列表点击“创建 VPS”，选择协议组合并确认少量必要参数。Reality 密钥、Short ID、Shadowsocks 主密码和 Hysteria2 混淆密码均由 Worker 自动生成。
-2. 创建 VPS 时选择 Direct 或 Cloudflare Tunnel，以及系统级或用户级部署，再复制一次性安装命令并在 15 分钟内执行。票据成功注册后立即失效，重新生成也会使旧票据失效。
+2. 创建 VPS 时选择 Direct 或 Cloudflare Tunnel；部署策略默认使用“自动检测”，也可强制系统级或用户级，再复制一次性安装命令并在 15 分钟内执行。自动模式按命令的有效身份选择：root 使用系统级，普通用户使用用户级；低端口和 TLS/ACME 配置会要求系统级且不会静默提权。票据成功注册后立即失效，重新生成也会使旧票据失效。
    Bootstrap 只依赖基础 POSIX shell、`curl`/`wget`/BusyBox 之一以及任一常见 SHA-256 工具；它只下载并校验 Agent。
    Agent 根据系统环境安装固定版本的 sing-box 1.13.12；Tunnel 模式还会安装 cloudflared 2026.8.2。所有二进制均使用固定 SHA-256 摘要验证，并配置 systemd、OpenRC 或 standalone 进程管理。
 3. 在订阅列表创建订阅，选择一个或多个已安装 VPS，再添加一个或多个客户端。每个客户端拥有独立凭据和订阅 Token；创建、编辑、停用或删除会自动发布所有受影响 VPS。
@@ -86,6 +86,8 @@ curl -fsSL https://管理域名/install.sh | sudo sh -s -- --ticket 一次性票
 ```bash
 curl -fsSL https://管理域名/install.sh | sh -s -- --ticket 一次性票据 --mode user
 ```
+
+自动部署命令使用 `--mode auto`。不带 `sudo` 时按普通用户安装，使用 `sudo` 或直接以 root 执行时按系统级安装。控制面会在 Agent 注册时重新校验最终模式与协议、端口是否兼容，并原子锁定实际部署模式；例如普通用户不能用自动模式绕过 443 低端口或 ACME 的系统级要求。
 
 常规用户级部署使用 systemd 用户管理器。若 VPS 没有持续登录会话，管理员需执行 `loginctl enable-linger 用户名`；这一步属于系统策略，Agent 不会自行提权修改。无 systemd/OpenRC 时会自动回退 standalone，OpenRC 当前仅支持系统级部署。
 

@@ -64,6 +64,6 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 ## 容量和安全边界
 
 - 单控制面最多 200 台 VPS、200 个订阅组；单次订阅最多 8 台 VPS、10 个初始客户端。
-- Direct 模式支持 VLESS Reality + Vision、Shadowsocks AEAD 2022、VLESS TLS + WebSocket、VLESS TLS + gRPC、Hysteria2、TUIC 和 Trojan TLS。TLS/ACME 协议仅允许 system/root，且每台 VPS 最多一个；上线前必须验证 TCP 80、目标 TCP/UDP 端口、DNS 和证书续期。Tunnel 模式固定为 VLESS + WebSocket，生产使用 Named Tunnel。
+- Direct 模式支持 VLESS Reality + Vision、Shadowsocks AEAD 2022、VLESS TLS + WebSocket、VLESS TLS + gRPC、Hysteria2、TUIC 和 Trojan TLS。部署策略默认 auto，并在注册时锁定 Agent 实际使用的 system/user 模式；TLS/ACME、Direct 低端口仍仅允许 system/root，且每台 VPS 最多一个 ACME 协议。上线前必须验证 TCP 80、目标 TCP/UDP 端口、DNS 和证书续期。Tunnel 模式固定为 VLESS + WebSocket，生产使用 Named Tunnel。
 - 控制面不执行远程 Shell，不下发任意命令。Agent 只接受声明式 sing-box 配置和固定、带 SHA-256 的发布清单。
 - 管理登录和公共 Agent/订阅接口分别使用 Cloudflare Rate Limiting binding。真正的管理域名还应启用 Cloudflare Access 或等价的身份边界。
