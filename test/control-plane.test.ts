@@ -134,6 +134,20 @@ describe("control-plane production flow", () => {
     expect(deleted.status).toBe(200);
   });
 
+  it("accepts multiple Direct TLS protocols backed by one shared certificate", async () => {
+    const created = await jsonRequest("/api/admin/vps", {
+      method: "POST",
+      headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Shared TLS", connect_host: "shared.example.net", deployment_policy: "system", ingress_mode: "direct", protocols: [
+        { type: "vless-tls-websocket", settings: { listen_port: 8443, server_address: "shared.example.net", tls_server_name: "shared.example.net", acme_email: "ops@example.net", websocket_path: "/vless", websocket_host: "shared.example.net" } },
+        { type: "trojan-tls-websocket", settings: { listen_port: 9443, server_address: "shared.example.net", tls_server_name: "shared.example.net", acme_email: "ops@example.net", websocket_path: "/trojan", websocket_host: "shared.example.net" } },
+      ] }),
+    });
+    expect(created.status).toBe(201);
+    const value = await created.json<{ id: string }>();
+    expect((await jsonRequest(`/api/admin/vps/${value.id}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
+  });
+
   it("exposes Tunnel capabilities and validates protocol and edge-port combinations", async () => {
     const capabilities = await jsonRequest("/api/admin/ingress-capabilities", { headers: { cookie: adminCookie } });
     expect(await capabilities.json()).toMatchObject({

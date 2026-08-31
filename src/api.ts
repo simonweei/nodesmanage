@@ -1,6 +1,6 @@
 import { requireAdmin, requireAgent } from "./auth";
 import { hmacHex, randomBase64, randomToken, randomUuid, sha256Hex } from "./crypto";
-import { compileServerProfiles, ingressCapabilities, isAcmeProfile, isTunnelProfile, parseProfileSettings, parseProfileType, profileDefaults, profileNetworks, tunnelEdgePort, type ClientRecord, type IngressMode, type NodeRecord, type ProfileType, type ProtocolProfile, type TunnelKind } from "./domain";
+import { certificateRequirements, compileServerProfiles, ingressCapabilities, isAcmeProfile, isTunnelProfile, parseProfileSettings, parseProfileType, profileDefaults, profileNetworks, tunnelEdgePort, type CertificateRequirement, type ClientRecord, type IngressMode, type NodeRecord, type ProfileType, type ProtocolProfile, type TunnelKind } from "./domain";
 import { booleanField, HttpError, json, numberField, readJsonObject, stringField } from "./http";
 import { mihomoSubscription, singBoxSubscription, uriSubscription } from "./subscriptions";
 
@@ -125,9 +125,7 @@ function validateDeploymentPorts(mode: DeploymentPolicy, ingress: IngressMode, p
   if (mode === "user" && profiles.some((profile) => isAcmeProfile(profile.type))) {
     throw new HttpError(400, "TLS/ACME 协议需要监听 80 端口完成证书签发，仅支持 system/root 部署");
   }
-  if (profiles.filter((profile) => isAcmeProfile(profile.type)).length > 1) {
-    throw new HttpError(400, "每台 VPS 最多启用一个 TLS/ACME 协议，避免证书挑战监听器冲突");
-  }
+  certificateRequirements(profiles, ingress);
   for (let i = 0; i < profiles.length; i++) {
     for (let j = i + 1; j < profiles.length; j++) {
       const left = profiles[i];
@@ -189,6 +187,18 @@ function storedProtocols(profile: ProfileRow): ProtocolProfile[] {
 
 function storedProfileType(type: ProfileType): ProfileType {
   return type === "trojan-tls-websocket" ? "trojan-tls" : type;
+}
+
+async function certificateRequirementsForAgent(agentId: string, env: Env): Promise<CertificateRequirement[]> {
+  const profile = await env.DB.prepare(`SELECT p.id,p.name,p.type,p.settings_json,p.protocols_json,n.ingress_mode
+    FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.agent_id=?`).bind(agentId)
+    .first<ProfileRow & { ingress_mode: IngressMode }>();
+  if (!profile) return [];
+  const protocols = storedProtocols(profile).map(({ type, settings }) => {
+    const parsedType = parseProfileType(type);
+    return { type: parsedType, settings: parseProfileSettings(parsedType, settings, profile.ingress_mode) };
+  });
+  return certificateRequirements(protocols, profile.ingress_mode);
 }
 
 async function agentIdsForNodes(env: Env, nodeIds: string[]): Promise<string[]> {
@@ -750,7 +760,7 @@ async function syncAgent(request: Request, env: Env): Promise<Response> {
     const revision = await env.DB.prepare("SELECT id,config_json,sha256 FROM revisions WHERE id=? AND agent_id=?")
       .bind(state.desired_revision, agent.id)
       .first<{ id: number; config_json: string; sha256: string }>();
-    if (revision) return json({ desired_revision: revision.id, config_json: revision.config_json, sha256: revision.sha256, poll_seconds: Number(env.AGENT_POLL_SECONDS) || 60 });
+    if (revision) return json({ desired_revision: revision.id, config_json: revision.config_json, sha256: revision.sha256, certificates: await certificateRequirementsForAgent(agent.id, env), poll_seconds: Number(env.AGENT_POLL_SECONDS) || 60 });
   }
   return json({ desired_revision: state.desired_revision, poll_seconds: Number(env.AGENT_POLL_SECONDS) || 60 });
 }

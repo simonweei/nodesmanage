@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
-import { compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
+import { certificateRequirements, compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
 import { readJsonObject } from "../src/http";
 import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src/subscriptions";
 
@@ -33,7 +33,12 @@ describe("production Protocol Profiles", () => {
     const tuic = (compileServerConfig("tuic", cases[5][1], [client]).inbounds as Record<string, unknown>[])[0];
     expect(tuic).toMatchObject({ congestion_control: "bbr", zero_rtt_handshake: false });
     const grpc = (compileServerConfig("vless-tls-grpc", cases[3][1], [client]).inbounds as Record<string, unknown>[])[0];
-    expect(grpc).toMatchObject({ tls: { alpn: ["h2"], acme: { provider: "letsencrypt", disable_tls_alpn_challenge: true } }, transport: { type: "grpc", service_name: "NodeManage" } });
+    expect(grpc).toMatchObject({ tls: {
+      alpn: ["h2"],
+      certificate_path: "/etc/nodemanage/certificates/grpc.example.net/current/fullchain.pem",
+      key_path: "/etc/nodemanage/certificates/grpc.example.net/current/privatekey.pem",
+    }, transport: { type: "grpc", service_name: "NodeManage" } });
+    expect(grpc.tls).not.toHaveProperty("acme");
   });
 
   it("rejects invalid ports and short IDs", () => {
@@ -60,6 +65,21 @@ describe("multiple protocols on one VPS", () => {
     const node = { id: "multi", name: "Tokyo", connect_host: "node.example.com", connect_port: 443, ingress_mode: "direct" as const, type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
     expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(8);
     expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(8);
+  });
+
+  it("shares one managed certificate between TLS protocols on the same domain", () => {
+    const shared = [
+      { type: "vless-tls-websocket" as const, settings: { ...cases[2][1], tls_server_name: "shared.example.net", acme_email: "ops@example.net" } },
+      { type: "trojan-tls-websocket" as const, settings: { ...cases[7][1], tls_server_name: "shared.example.net", acme_email: "ops@example.net" } },
+    ];
+    expect(certificateRequirements(shared, "direct")).toEqual([{ domain: "shared.example.net", email: "ops@example.net" }]);
+    const inbounds = compileServerProfiles(shared, [client]).inbounds as Array<{ tls: { certificate_path: string } }>;
+    expect(inbounds[0]?.tls.certificate_path).toBe(inbounds[1]?.tls.certificate_path);
+    expect(() => certificateRequirements([
+      shared[0],
+      { ...shared[1], settings: { ...shared[1].settings, acme_email: "security@example.net" } },
+    ], "direct")).toThrow("相同的 ACME 邮箱");
+    expect(certificateRequirements(shared, "cloudflare_tunnel")).toEqual([]);
   });
 
   it("terminates TLS at Cloudflare and publishes the verified hostname", () => {

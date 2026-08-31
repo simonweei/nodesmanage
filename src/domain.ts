@@ -67,6 +67,13 @@ export interface ProtocolProfile {
   settings: ProfileSettings;
 }
 
+export interface CertificateRequirement {
+  domain: string;
+  email: string;
+}
+
+const MANAGED_CERTIFICATE_ROOT = "/etc/nodemanage/certificates";
+
 function object(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new HttpError(400, "settings must be an object");
   return input as Record<string, unknown>;
@@ -127,6 +134,20 @@ export function profileNetworks(type: ProfileType): readonly ("tcp" | "udp")[] {
   if (type === "hysteria2" || type === "tuic") return ["udp"];
   if (type === "shadowsocks-aead") return ["tcp", "udp"];
   return ["tcp"];
+}
+
+export function certificateRequirements(profiles: ProtocolProfile[], ingressMode: IngressMode): CertificateRequirement[] {
+  if (ingressMode !== "direct") return [];
+  const requirements = new Map<string, CertificateRequirement>();
+  for (const profile of profiles) {
+    if (!isAcmeProfile(profile.type)) continue;
+    const domain = profile.settings.tls_server_name!;
+    const email = profile.settings.acme_email!;
+    const existing = requirements.get(domain);
+    if (existing && existing.email !== email) throw new HttpError(400, `同一证书域名 ${domain} 必须使用相同的 ACME 邮箱`);
+    requirements.set(domain, { domain, email });
+  }
+  return [...requirements.values()].sort((left, right) => left.domain.localeCompare(right.domain));
 }
 
 export function parseProfileType(value: unknown): ProfileType {
@@ -208,18 +229,13 @@ export async function profileDefaults(type: ProfileType, deploymentMode: "system
 }
 
 function managedTls(settings: ProfileSettings, alpn?: string[]): Record<string, unknown> {
+  const directory = `${MANAGED_CERTIFICATE_ROOT}/${settings.tls_server_name}/current`;
   return {
     enabled: true,
     server_name: settings.tls_server_name,
     ...(alpn ? { alpn } : {}),
-    acme: {
-      domain: [settings.tls_server_name],
-      data_directory: "/etc/nodemanage/acme",
-      default_server_name: settings.tls_server_name,
-      email: settings.acme_email,
-      provider: "letsencrypt",
-      disable_tls_alpn_challenge: true,
-    },
+    certificate_path: `${directory}/fullchain.pem`,
+    key_path: `${directory}/privatekey.pem`,
   };
 }
 

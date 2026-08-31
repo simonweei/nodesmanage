@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version          = "0.9.0"
+	version          = "0.10.0"
 	maxResponseBytes = 3 << 20
 )
 
@@ -46,22 +46,25 @@ type config struct {
 }
 
 type permissions struct {
-	User                string `json:"user"`
-	UID                 int    `json:"uid"`
-	EUID                int    `json:"euid"`
-	GID                 int    `json:"gid"`
-	IsRoot              bool   `json:"is_root"`
-	EffectiveCapsHex    string `json:"effective_capabilities_hex"`
-	ConfigReadable      bool   `json:"config_readable"`
-	ConfigWritable      bool   `json:"config_writable"`
-	SingBoxExecutable   bool   `json:"sing_box_executable"`
-	ServiceControl      bool   `json:"service_control"`
-	Distribution        string `json:"distribution"`
-	DistributionVersion string `json:"distribution_version"`
-	Libc                string `json:"libc"`
-	InitSystem          string `json:"init_system"`
-	InstallMode         string `json:"install_mode"`
-	BindLowPort         bool   `json:"bind_low_port"`
+	User                string   `json:"user"`
+	UID                 int      `json:"uid"`
+	EUID                int      `json:"euid"`
+	GID                 int      `json:"gid"`
+	IsRoot              bool     `json:"is_root"`
+	EffectiveCapsHex    string   `json:"effective_capabilities_hex"`
+	ConfigReadable      bool     `json:"config_readable"`
+	ConfigWritable      bool     `json:"config_writable"`
+	SingBoxExecutable   bool     `json:"sing_box_executable"`
+	ServiceControl      bool     `json:"service_control"`
+	Distribution        string   `json:"distribution"`
+	DistributionVersion string   `json:"distribution_version"`
+	Libc                string   `json:"libc"`
+	InitSystem          string   `json:"init_system"`
+	InstallMode         string   `json:"install_mode"`
+	BindLowPort         bool     `json:"bind_low_port"`
+	CertificateDomains  []string `json:"certificate_domains,omitempty"`
+	CertificateExpires  string   `json:"certificate_expires_at,omitempty"`
+	CertificateError    string   `json:"certificate_error,omitempty"`
 }
 
 type syncRequest struct {
@@ -84,19 +87,23 @@ type syncRequest struct {
 }
 
 type syncResponse struct {
-	DesiredRevision *int64 `json:"desired_revision"`
-	ConfigJSON      string `json:"config_json"`
-	SHA256          string `json:"sha256"`
-	PollSeconds     int    `json:"poll_seconds"`
+	DesiredRevision *int64                   `json:"desired_revision"`
+	ConfigJSON      string                   `json:"config_json"`
+	SHA256          string                   `json:"sha256"`
+	PollSeconds     int                      `json:"poll_seconds"`
+	Certificates    []certificateRequirement `json:"certificates"`
 }
 
 type agent struct {
-	configPath      string
-	config          config
-	client          *http.Client
-	previousCPU     cpuSample
-	lastTunnelError string
-	tunnelRouter    net.Listener
+	configPath           string
+	config               config
+	client               *http.Client
+	previousCPU          cpuSample
+	lastTunnelError      string
+	tunnelRouter         net.Listener
+	certManager          *certificateManager
+	certificateStatus    certificateStatus
+	lastCertificateError string
 }
 
 type cpuSample struct {
@@ -137,6 +144,18 @@ func run(args []string, once bool) {
 	a := &agent{configPath: *configPath, client: &http.Client{Timeout: 20 * time.Second}}
 	must(a.loadConfig())
 	for {
+		if changed, status, err := a.maintainCertificates(); err != nil {
+			a.setCertificateStatus(status, err)
+			fmt.Fprintf(os.Stderr, "certificates: %v\n", err)
+		} else {
+			a.setCertificateStatus(status, nil)
+			if changed {
+				if err := restartService(a.config.InitSystem, a.config.InstallMode, strings.TrimSuffix(a.config.ServiceName, ".service")); err != nil {
+					a.lastCertificateError = fmt.Sprintf("reload renewed certificates: %v", err)
+					fmt.Fprintln(os.Stderr, a.lastCertificateError)
+				}
+			}
+		}
 		if err := a.ensureTunnel(); err != nil {
 			a.lastTunnelError = err.Error()
 			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
@@ -198,12 +217,18 @@ func (a *agent) sync() error {
 	memoryTotal, memoryUsed := memoryStats()
 	diskTotal, diskUsed := diskStats(filepath.Dir(a.config.RuntimePath))
 	cpuUsage := a.cpuUsage()
+	permissionReport := collectPermissions(a.config)
+	permissionReport.CertificateDomains = append([]string(nil), a.certificateStatus.Domains...)
+	if !a.certificateStatus.EarliestExpiry.IsZero() {
+		permissionReport.CertificateExpires = a.certificateStatus.EarliestExpiry.UTC().Format(time.RFC3339)
+	}
+	permissionReport.CertificateError = a.lastCertificateError
 	request := syncRequest{
 		AgentVersion: version, SingBoxVersion: commandOutput(a.config.SingBoxPath, "version"), CurrentRevision: currentRevision,
 		SingBoxRunning: serviceActive(a.config.InitSystem, a.config.InstallMode, strings.TrimSuffix(a.config.ServiceName, ".service")), UptimeSeconds: uptimeSeconds(),
 		CPUUsagePercent:  cpuUsage,
 		MemoryTotalBytes: memoryTotal, MemoryUsedBytes: memoryUsed, DiskTotalBytes: diskTotal, DiskUsedBytes: diskUsed,
-		Permissions: collectPermissions(a.config),
+		Permissions: permissionReport,
 	}
 	if a.config.IngressMode == "cloudflare_tunnel" {
 		request.CloudflaredVersion = commandOutput(a.config.CloudflaredPath, "version")
@@ -240,7 +265,7 @@ func (a *agent) sync() error {
 	if response.DesiredRevision == nil || response.ConfigJSON == "" || (currentRevision != nil && *response.DesiredRevision == *currentRevision) {
 		return nil
 	}
-	err := a.apply(*response.DesiredRevision, response.ConfigJSON, response.SHA256)
+	err := a.apply(*response.DesiredRevision, response.ConfigJSON, response.SHA256, response.Certificates)
 	result := map[string]any{"revision": *response.DesiredRevision, "success": err == nil}
 	if err != nil {
 		result["error"] = err.Error()
@@ -283,7 +308,7 @@ func (a *agent) cpuUsage() float64 {
 	return float64(int(usage*10+0.5)) / 10
 }
 
-func (a *agent) apply(revision int64, configJSON, expectedHash string) error {
+func (a *agent) apply(revision int64, configJSON, expectedHash string, certificates []certificateRequirement) error {
 	digest := sha256.Sum256([]byte(configJSON))
 	if !strings.EqualFold(hex.EncodeToString(digest[:]), expectedHash) {
 		return errors.New("configuration checksum mismatch")
@@ -308,6 +333,19 @@ func (a *agent) apply(revision int64, configJSON, expectedHash string) error {
 	temporaryConfig := filepath.Join(temporaryDir, "config.json")
 	if err := os.WriteFile(temporaryConfig, []byte(configJSON), 0600); err != nil {
 		return fmt.Errorf("write temporary config: %w", err)
+	}
+	if len(certificates) > 0 && a.config.InstallMode != "system" {
+		return errors.New("managed ACME certificates require system/root installation")
+	}
+	if err := writeJSONAtomic(filepath.Join(temporaryDir, "certificates.json"), certificates, 0600); err != nil {
+		return fmt.Errorf("write certificate requirements: %w", err)
+	}
+	if len(certificates) > 0 {
+		_, status, certificateErr := a.certificateManagerForConfig().Ensure(certificates)
+		a.setCertificateStatus(status, certificateErr)
+		if certificateErr != nil {
+			return fmt.Errorf("managed certificates: %w", certificateErr)
+		}
 	}
 	if a.config.InstallMode == "user" {
 		if err := validateUserPorts([]byte(configJSON)); err != nil {
