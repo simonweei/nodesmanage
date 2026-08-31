@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,7 +21,7 @@ import (
 )
 
 const (
-	version          = "0.8.0"
+	version          = "0.9.0"
 	maxResponseBytes = 3 << 20
 )
 
@@ -95,6 +96,7 @@ type agent struct {
 	client          *http.Client
 	previousCPU     cpuSample
 	lastTunnelError string
+	tunnelRouter    net.Listener
 }
 
 type cpuSample struct {
@@ -212,10 +214,16 @@ func (a *agent) sync() error {
 		}
 		request.TunnelError = a.lastTunnelError
 		if request.TunnelRunning && request.TunnelHostname != "" {
-			if err := probeTunnel(a.client, request.TunnelHostname, a.config.TunnelConnectPort, websocketPath(a.config.RuntimePath)); err == nil {
-				request.IngressVerified = true
-			} else if request.TunnelError == "" {
-				request.TunnelError = err.Error()
+			paths := websocketPaths(a.config.RuntimePath)
+			request.IngressVerified = len(paths) > 0
+			for _, path := range paths {
+				if err := probeTunnel(a.client, request.TunnelHostname, a.config.TunnelConnectPort, path); err != nil {
+					request.IngressVerified = false
+					if request.TunnelError == "" {
+						request.TunnelError = err.Error()
+					}
+					break
+				}
 			}
 		}
 	}

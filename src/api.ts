@@ -113,8 +113,10 @@ function endpointHost(value: unknown, required: boolean): string {
 
 function validateDeploymentPorts(mode: DeploymentPolicy, ingress: IngressMode, profiles: ProtocolProfile[]): void {
   if (ingress === "cloudflare_tunnel") {
-    if (profiles.length !== 1 || !profiles[0] || !isTunnelProfile(profiles[0].type)) throw new HttpError(400, "Cloudflare Tunnel 模式仅支持一个 WebSocket 协议");
-    if ((profiles[0]?.settings.listen_port ?? 0) <= 1024) throw new HttpError(400, "Cloudflare Tunnel 本地端口必须在 1025-65535 范围内");
+    if (profiles.length > 2 || profiles.some((profile) => !isTunnelProfile(profile.type))) throw new HttpError(400, "Cloudflare Tunnel 模式仅支持 VLESS 或 Trojan WebSocket 协议");
+    if (profiles.some((profile) => profile.settings.listen_port <= 1024)) throw new HttpError(400, "Cloudflare Tunnel 本地端口必须在 1025-65535 范围内");
+    if (new Set(profiles.map((profile) => profile.settings.listen_port)).size !== profiles.length) throw new HttpError(400, "Tunnel 协议必须使用不同的本地端口");
+    if (new Set(profiles.map((profile) => profile.settings.websocket_path)).size !== profiles.length) throw new HttpError(400, "Tunnel 协议必须使用不同的 WebSocket 路径");
     return;
   }
   if (mode === "user" && profiles.some((profile) => profile.settings.listen_port <= 1024)) {
@@ -138,9 +140,22 @@ function validateDeploymentPorts(mode: DeploymentPolicy, ingress: IngressMode, p
   }
 }
 
-function tunnelConnectPort(body: Record<string, unknown>, kind: TunnelKind, fallback = 443): number {
+function tunnelOriginPort(body: Record<string, unknown>, ingress: IngressMode, fallback = 18080): number {
+  if (ingress !== "cloudflare_tunnel") throw new HttpError(400, "Tunnel 路由端口仅适用于 Cloudflare Tunnel");
+  const value = body.origin_port === undefined ? fallback : body.origin_port;
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 1024 || value > 65535) throw new HttpError(400, "Tunnel 路由端口必须在 1025-65535 范围内");
+  return value;
+}
+
+function validateTunnelOrigin(originPort: number, profiles: ProtocolProfile[]): void {
+  if (profiles.some((profile) => profile.settings.listen_port === originPort)) throw new HttpError(400, "Tunnel 路由端口不能与协议本地端口相同");
+}
+
+function validateTunnelProfiles(kind: TunnelKind, profiles: ProtocolProfile[]): void {
   if (kind !== "quick" && kind !== "named") throw new HttpError(400, "Cloudflare Tunnel 类型无效");
-  return tunnelEdgePort(kind, body.connect_port === undefined ? fallback : body.connect_port);
+  if (kind === "quick" && profiles.length !== 1) throw new HttpError(400, "Quick Tunnel 只能启用一个协议");
+  const edgePorts = profiles.map((profile) => tunnelEdgePort(kind, profile.settings.edge_port));
+  if (new Set(edgePorts).size !== edgePorts.length) throw new HttpError(400, "Named Tunnel 的协议必须使用不同的 Cloudflare 公网端口");
 }
 
 function requiresSystemDeployment(ingress: IngressMode, profiles: ProtocolProfile[]): boolean {
@@ -296,11 +311,13 @@ async function createVps(request: Request, env: Env): Promise<Response> {
   const connectHost = endpointHost(body.connect_host, ingress === "direct" || kind === "named");
   const protocols = await submittedProtocols(body, policy, ingress);
   validateDeploymentPorts(policy, ingress, protocols);
+  if (ingress === "cloudflare_tunnel") validateTunnelProfiles(kind, protocols);
   const systemRequired = requiresSystemDeployment(ingress, protocols);
   const mode: DeploymentMode = policy === "auto" ? (systemRequired ? "system" : "user") : policy;
   const { type, settings } = protocols[0]!;
-  const connectPort = ingress === "cloudflare_tunnel" ? tunnelConnectPort(body, kind) : settings.listen_port;
-  const originPort = settings.listen_port;
+  const connectPort = ingress === "cloudflare_tunnel" ? settings.edge_port! : settings.listen_port;
+  const originPort = ingress === "cloudflare_tunnel" ? tunnelOriginPort(body, ingress) : settings.listen_port;
+  if (ingress === "cloudflare_tunnel") validateTunnelOrigin(originPort, protocols);
   const ingressStatus = ingress === "direct" ? "configured" : "pending";
   const installTicketId = randomUuid();
   const ticket = randomToken(24);
@@ -328,13 +345,14 @@ async function updateVps(id: string, request: Request, env: Env): Promise<Respon
   if (current.agent_id && ingress === "cloudflare_tunnel" && connectHost !== current.connect_host) throw new HttpError(409, "已安装 Tunnel 的公网域名不能在线修改，请安全退役后重新创建");
   const protocols = await submittedProtocols(body, policy, ingress);
   validateDeploymentPorts(policy, ingress, protocols);
+  if (ingress === "cloudflare_tunnel") validateTunnelProfiles(kind, protocols);
   const systemRequired = requiresSystemDeployment(ingress, protocols);
   const mode: DeploymentMode = current.agent_id ? current.deployment_mode : policy === "auto" ? (systemRequired ? "system" : "user") : policy;
   if (current.agent_id) validateDeploymentPorts(mode, ingress, protocols);
   const { type, settings } = protocols[0]!;
-  const connectPort = ingress === "cloudflare_tunnel" ? tunnelConnectPort(body, kind, current.connect_port || 443) : settings.listen_port;
-  if (current.agent_id && connectPort !== current.connect_port) throw new HttpError(409, "已安装 Tunnel 的公网端口不能在线修改，请安全退役后重新创建");
-  const originPort = settings.listen_port;
+  const connectPort = ingress === "cloudflare_tunnel" ? settings.edge_port! : settings.listen_port;
+  const originPort = ingress === "cloudflare_tunnel" ? tunnelOriginPort(body, ingress, current.origin_port || 18080) : settings.listen_port;
+  if (ingress === "cloudflare_tunnel") validateTunnelOrigin(originPort, protocols);
   if (current.agent_id && ingress === "cloudflare_tunnel" && originPort !== current.origin_port) throw new HttpError(409, "已安装 Tunnel 的本地端口不能在线修改，请安全退役后重新创建");
   const ingressStatus = ingress === "direct" ? "configured" : (current.connect_host ? "connected" : "pending");
   const statements = [

@@ -63,24 +63,29 @@ describe("multiple protocols on one VPS", () => {
   });
 
   it("terminates TLS at Cloudflare and publishes the verified hostname", () => {
-    const settings = parseProfileSettings("vless-tls-websocket", { listen_port: 18080, websocket_path: "/proxy" }, "cloudflare_tunnel");
+    const settings = parseProfileSettings("vless-tls-websocket", { listen_port: 18081, edge_port: 443, websocket_path: "/proxy" }, "cloudflare_tunnel");
     const inbound = (compileServerConfig("vless-tls-websocket", settings, [client], "cloudflare_tunnel").inbounds as Record<string, unknown>[])[0];
-    expect(inbound).toMatchObject({ listen: "127.0.0.1", listen_port: 18080, transport: { type: "ws", path: "/proxy" } });
+    expect(inbound).toMatchObject({ listen: "127.0.0.1", listen_port: 18081, transport: { type: "ws", path: "/proxy" } });
     expect(inbound).not.toHaveProperty("tls");
     const node = { id: "tunnel", name: "Tunnel", connect_host: "random.trycloudflare.com", connect_port: 443, ingress_mode: "cloudflare_tunnel" as const, type: "vless-tls-websocket" as const, settings_json: JSON.stringify(settings) };
     expect(uriSubscription(client, [node])).toContain("random.trycloudflare.com:443");
   });
 
   it("supports both public WebSocket protocols and only documented HTTPS edge ports", () => {
-    const settings = parseProfileSettings("trojan-tls-websocket", { listen_port: 18081, websocket_path: "/trojan" }, "cloudflare_tunnel");
+    const settings = parseProfileSettings("trojan-tls-websocket", { listen_port: 18082, edge_port: 8443, websocket_path: "/trojan" }, "cloudflare_tunnel");
     const inbound = (compileServerConfig("trojan-tls-websocket", settings, [client], "cloudflare_tunnel").inbounds as Record<string, unknown>[])[0];
-    expect(inbound).toMatchObject({ type: "trojan", listen: "127.0.0.1", listen_port: 18081, transport: { type: "ws", path: "/trojan" } });
+    expect(inbound).toMatchObject({ type: "trojan", listen: "127.0.0.1", listen_port: 18082, transport: { type: "ws", path: "/trojan" } });
     expect(inbound).not.toHaveProperty("tls");
     expect(tunnelEdgePort("quick", 443)).toBe(443);
     expect(tunnelEdgePort("named", 8443)).toBe(8443);
     expect(() => tunnelEdgePort("quick", 8443)).toThrow("不支持");
     expect(() => tunnelEdgePort("named", 9443)).toThrow("不支持");
-    expect(ingressCapabilities()).toMatchObject({ cloudflare_tunnel: { quick: { protocols: ["vless-tls-websocket", "trojan-tls-websocket"], edge_ports: [443] }, named: { edge_ports: [443, 2053, 2083, 2087, 2096, 8443] } } });
+    expect(ingressCapabilities()).toMatchObject({ cloudflare_tunnel: { quick: { protocols: ["vless-tls-websocket", "trojan-tls-websocket"], edge_ports: [443], multiple_protocols: false }, named: { edge_ports: [443, 2053, 2083, 2087, 2096, 8443], multiple_protocols: true } } });
+    const vless = parseProfileSettings("vless-tls-websocket", { listen_port: 18081, edge_port: 443, websocket_path: "/vless" }, "cloudflare_tunnel");
+    const node = { id: "named-dual", name: "Named", connect_host: "tunnel.example.com", connect_port: 443, ingress_mode: "cloudflare_tunnel" as const, type: "vless-tls-websocket" as const, settings_json: JSON.stringify(vless), protocols_json: JSON.stringify([{ type: "vless-tls-websocket", settings: vless }, { type: "trojan-tls-websocket", settings }]) };
+    const links = uriSubscription(client, [node]);
+    expect(links).toContain("tunnel.example.com:443");
+    expect(links).toContain("tunnel.example.com:8443");
   });
 });
 

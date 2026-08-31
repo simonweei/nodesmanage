@@ -26,6 +26,7 @@ export const TUNNEL_EDGE_PORTS = {
 
 export interface ProfileSettings {
   listen_port: number;
+  edge_port?: number;
   server_name?: string;
   reality_private_key?: string;
   reality_public_key?: string;
@@ -117,7 +118,7 @@ export function ingressCapabilities(): Record<string, unknown> {
     direct: { protocols: [...PROFILE_TYPES] },
     cloudflare_tunnel: {
       quick: { protocols: [...TUNNEL_PROFILE_TYPES], edge_ports: [...TUNNEL_EDGE_PORTS.quick], default_edge_port: 443, multiple_protocols: false },
-      named: { protocols: [...TUNNEL_PROFILE_TYPES], edge_ports: [...TUNNEL_EDGE_PORTS.named], default_edge_port: 443, multiple_protocols: false },
+      named: { protocols: [...TUNNEL_PROFILE_TYPES], edge_ports: [...TUNNEL_EDGE_PORTS.named], default_edge_port: 443, multiple_protocols: true },
     },
   };
 }
@@ -158,6 +159,7 @@ export function parseProfileSettings(type: ProfileType, input: unknown, ingressM
     const path = string(value.websocket_path, "websocket_path", 256);
     if (!path.startsWith("/") || /[?#]/.test(path)) throw new HttpError(400, "websocket_path must start with / and cannot contain ? or #");
     result.websocket_path = path;
+    result.edge_port = port(value.edge_port, "edge_port");
     return result;
   }
   if (isAcmeProfile(type)) {
@@ -181,7 +183,9 @@ export function parseProfileSettings(type: ProfileType, input: unknown, ingressM
 
 export async function profileDefaults(type: ProfileType, deploymentMode: "system" | "user" = "system", ingressMode: IngressMode = "direct"): Promise<ProfileSettings> {
   if (ingressMode === "cloudflare_tunnel" && isTunnelProfile(type)) {
-    return { listen_port: 18080, websocket_path: "/proxy" };
+    return type === "vless-tls-websocket"
+      ? { listen_port: 18081, edge_port: 443, websocket_path: "/vless" }
+      : { listen_port: 18082, edge_port: 8443, websocket_path: "/trojan" };
   }
   if (type === "vless-reality-vision") {
     const keys = await realityKeypair();

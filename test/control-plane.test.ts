@@ -144,9 +144,17 @@ describe("control-plane production flow", () => {
     });
     const invalidQuickPort = await jsonRequest("/api/admin/vps", {
       method: "POST", headers: { cookie: adminCookie },
-      body: JSON.stringify({ name: "Invalid Quick", ingress_mode: "cloudflare_tunnel", tunnel_kind: "quick", connect_port: 8443, protocols: [{ type: "vless-tls-websocket", settings: { listen_port: 18080, websocket_path: "/proxy" } }] }),
+      body: JSON.stringify({ name: "Invalid Quick", ingress_mode: "cloudflare_tunnel", tunnel_kind: "quick", protocols: [{ type: "vless-tls-websocket", settings: { listen_port: 18081, edge_port: 8443, websocket_path: "/proxy" } }] }),
     });
     expect(invalidQuickPort.status).toBe(400);
+    const invalidQuickMultiple = await jsonRequest("/api/admin/vps", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Invalid Quick Multiple", ingress_mode: "cloudflare_tunnel", tunnel_kind: "quick", protocols: [
+        { type: "vless-tls-websocket", settings: { listen_port: 18081, edge_port: 443, websocket_path: "/vless" } },
+        { type: "trojan-tls-websocket", settings: { listen_port: 18082, edge_port: 443, websocket_path: "/trojan" } },
+      ] }),
+    });
+    expect(invalidQuickMultiple.status).toBe(400);
     const invalidTunnelProtocol = await jsonRequest("/api/admin/vps", {
       method: "POST", headers: { cookie: adminCookie },
       body: JSON.stringify({ name: "Invalid gRPC", ingress_mode: "cloudflare_tunnel", tunnel_kind: "quick", connect_port: 443, protocols: [{ type: "vless-tls-grpc", settings: { listen_port: 18080 } }] }),
@@ -154,11 +162,14 @@ describe("control-plane production flow", () => {
     expect(invalidTunnelProtocol.status).toBe(400);
     const named = await jsonRequest("/api/admin/vps", {
       method: "POST", headers: { cookie: adminCookie },
-      body: JSON.stringify({ name: "Named Trojan WS", connect_host: "tunnel.example.com", ingress_mode: "cloudflare_tunnel", tunnel_kind: "named", connect_port: 8443, protocols: [{ type: "trojan-tls-websocket", settings: { listen_port: 18081, websocket_path: "/trojan" } }] }),
+      body: JSON.stringify({ name: "Named Dual WS", connect_host: "tunnel.example.com", ingress_mode: "cloudflare_tunnel", tunnel_kind: "named", origin_port: 18080, protocols: [
+        { type: "vless-tls-websocket", settings: { listen_port: 18081, edge_port: 443, websocket_path: "/vless" } },
+        { type: "trojan-tls-websocket", settings: { listen_port: 18082, edge_port: 8443, websocket_path: "/trojan" } },
+      ] }),
     });
     expect(named.status).toBe(201);
     const value = await named.json<{ id: string; connect_port: number; origin_port: number }>();
-    expect(value).toMatchObject({ connect_port: 8443, origin_port: 18081 });
+    expect(value).toMatchObject({ connect_port: 443, origin_port: 18080 });
     expect((await jsonRequest(`/api/admin/vps/${value.id}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
   });
 

@@ -24,7 +24,7 @@ describe("portable bootstrap", () => {
     const response = installManifest(new Request("https://manage.example.com/api/install/manifest?os=linux&arch=arm64"));
     const manifest = await response.json() as { schema_version: number; agent: { urls: string[]; sha256: string }; sing_box: { version: string; urls: string[]; sha256: string }; cloudflared: { version: string; urls: string[]; sha256: string } };
     expect(manifest.schema_version).toBe(2);
-    expect(manifest.agent.urls).toEqual(["https://manage.example.com/downloads/v0.8.0/nodemanage-agent-linux-arm64"]);
+    expect(manifest.agent.urls).toEqual(["https://manage.example.com/downloads/v0.9.0/nodemanage-agent-linux-arm64"]);
     expect(manifest.agent.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.sing_box).toMatchObject({ version: "1.13.12" });
     expect(manifest.sing_box.urls[0]).toContain("manage.example.com/downloads/v1.13.12/");

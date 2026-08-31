@@ -52,7 +52,7 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 ## 故障处理
 
 - Agent 离线：在 VPS 执行 `nodemanage-agent diagnose`，检查服务、DNS、系统时间和到 Worker HTTPS 的出站访问；随后执行 `nodemanage-agent repair`。
-- Tunnel 未验证：检查 Agent 状态中的 `tunnel_error`、VPS 上的 `cloudflared.log`、本机 sing-box WebSocket 入站和外网 HTTPS 出站。Quick Tunnel 仅用于诊断且固定使用 443；Named Tunnel 同时确认 Public Hostname 路由指向 `http://127.0.0.1:本地端口`，公网端口是 443、2053、2083、2087、2096 或 8443。未通过对应公网端口 WebSocket Upgrade 探测的节点不会进入订阅。
+- Tunnel 未验证：检查 Agent 状态中的 `tunnel_error`、VPS 上的 `cloudflared.log`、Agent 本地 WebSocket 路由、sing-box 入站和外网 HTTPS 出站。Quick Tunnel 仅用于诊断、固定使用 443 且只能启用一个协议；Named Tunnel 的 Public Hostname 路由应指向安装命令中的 `http://127.0.0.1:Tunnel本地路由端口`。两个协议同时启用时，公网端口、本地端口和路径必须分别不同；公网端口可选 443、2053、2083、2087、2096 或 8443。未通过全部 WebSocket 路径探测的节点不会进入订阅。
 - standalone 环境离线：检查 `/etc/nodemanage/nodemanage-agent.log`、`/etc/nodemanage/sing-box.log` 和对应 `.pid` 文件。受管容器重建后不会自动恢复进程，重新执行安装命令或 `nodemanage-agent repair`；长期生产节点应迁移到带 systemd/OpenRC 的 VPS。
 - 配置失败：面板查看错误及安装事件。Agent 会在 `sing-box check` 或重启失败时回滚到 previous；修正 Profile 后保存会自动生成新修订。
 - 配置发布中断：变更与 `reconcile_queue` 在同一个 D1 事务写入，Cron 会重试；也可在面板点击“发布”立即重试。

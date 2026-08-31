@@ -91,9 +91,9 @@ curl -fsSL https://管理域名/install.sh | sh -s -- --ticket 一次性票据 -
 
 常规用户级部署使用 systemd 用户管理器。若 VPS 没有持续登录会话，管理员需执行 `loginctl enable-linger 用户名`；这一步属于系统策略，Agent 不会自行提权修改。无 systemd/OpenRC 时会自动回退 standalone，OpenRC 当前仅支持系统级部署。
 
-当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.8.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
+当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.9.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
 
-Tunnel 模式只提供 Cloudflare Public Hostname 能直接承载的 VLESS/Trojan + TLS + WebSocket 组合：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 固定公网端口 443，会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，可使用 443、2053、2083、2087、2096 或 8443，并在一次性安装命令中填写已配置路由的域名和 Tunnel Token。Token 不写入 D1，只保存在 VPS 的 `0600` Agent 配置中。系统不会再把 Worker 看到的请求出口 IP 当作订阅地址。
+Tunnel 模式只提供 Cloudflare Public Hostname 能直接承载的 VLESS/Trojan + TLS + WebSocket 组合：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 固定公网端口 443 且只能启用一个协议，会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，可同时启用两个协议，每个协议分别使用 443、2053、2083、2087、2096 或 8443 中不重复的公网端口、本地端口和 WebSocket 路径。Agent 在 `127.0.0.1` 提供轻量路径路由，再转发到各 sing-box 入站。Named Tunnel 安装命令需填写已配置路由的域名和 Tunnel Token；Token 不写入 D1，只保存在 VPS 的 `0600` Agent 配置中。
 
 生产协议包括：
 

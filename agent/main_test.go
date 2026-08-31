@@ -3,11 +3,15 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -189,13 +193,54 @@ func TestQuickTunnelHostnameUsesLatestLogEntry(t *testing.T) {
 	}
 }
 
-func TestWebsocketPathReadsActiveRuntime(t *testing.T) {
+func TestWebsocketRoutesReadEveryActiveInbound(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, []byte(`{"inbounds":[{"transport":{"type":"ws","path":"/edge"}}]}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"inbounds":[{"listen_port":18081,"transport":{"type":"ws","path":"/vless"}},{"listen_port":18082,"transport":{"type":"ws","path":"/trojan"}}]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got := websocketPath(path); got != "/edge" {
-		t.Fatalf("path = %q", got)
+	routes := websocketRoutes(path)
+	if routes["/vless"] != 18081 || routes["/trojan"] != 18082 {
+		t.Fatalf("routes = %#v", routes)
+	}
+	paths := websocketPaths(path)
+	if len(paths) != 2 || paths[0] != "/trojan" || paths[1] != "/vless" {
+		t.Fatalf("paths = %#v", paths)
+	}
+}
+
+func TestTunnelRouterForwardsByWebsocketPath(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		_, _ = response.Write([]byte("forwarded:" + request.URL.Path))
+	}))
+	defer backend.Close()
+	_, backendPortText, err := net.SplitHostPort(strings.TrimPrefix(backend.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	backendPort, _ := strconv.Atoi(backendPortText)
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	routerPort := probe.Addr().(*net.TCPAddr).Port
+	_ = probe.Close()
+	runtimePath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(runtimePath, []byte(fmt.Sprintf(`{"inbounds":[{"listen_port":%d,"transport":{"type":"ws","path":"/vless"}}]}`, backendPort)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a := &agent{config: config{RuntimePath: runtimePath, TunnelOriginPort: routerPort}}
+	if err := a.ensureTunnelRouter(); err != nil {
+		t.Fatal(err)
+	}
+	defer a.stopTunnelRouter()
+	response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/vless", routerPort))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(response.Body)
+	if string(body) != "forwarded:/vless" {
+		t.Fatalf("body = %q", body)
 	}
 }
 

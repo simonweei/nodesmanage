@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,8 +51,12 @@ func stopTunnel(cfg config) {
 
 func (a *agent) ensureTunnel() error {
 	if a.config.IngressMode != "cloudflare_tunnel" {
+		a.stopTunnelRouter()
 		stopTunnel(a.config)
 		return nil
+	}
+	if err := a.ensureTunnelRouter(); err != nil {
+		return err
 	}
 	if tunnelActive(a.config) {
 		return nil
@@ -89,6 +96,41 @@ func (a *agent) ensureTunnel() error {
 	return nil
 }
 
+func (a *agent) ensureTunnelRouter() error {
+	if a.tunnelRouter != nil {
+		return nil
+	}
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", a.config.TunnelOriginPort))
+	if err != nil {
+		return fmt.Errorf("start tunnel WebSocket router: %w", err)
+	}
+	a.tunnelRouter = listener
+	server := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		routes := websocketRoutes(a.config.RuntimePath)
+		port, ok := routes[request.URL.Path]
+		if !ok {
+			http.NotFound(response, request)
+			return
+		}
+		target := &url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port)}
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		proxy.ErrorHandler = func(writer http.ResponseWriter, _ *http.Request, proxyErr error) {
+			fmt.Fprintf(os.Stderr, "tunnel router: %v\n", proxyErr)
+			http.Error(writer, "Tunnel protocol unavailable", http.StatusBadGateway)
+		}
+		proxy.ServeHTTP(response, request)
+	})}
+	go func() { _ = server.Serve(listener) }()
+	return nil
+}
+
+func (a *agent) stopTunnelRouter() {
+	if a.tunnelRouter != nil {
+		_ = a.tunnelRouter.Close()
+		a.tunnelRouter = nil
+	}
+}
+
 func quickTunnelHostname(cfg config) string {
 	file, err := os.Open(tunnelLogPath(cfg))
 	if err != nil {
@@ -105,28 +147,39 @@ func quickTunnelHostname(cfg config) string {
 	return result
 }
 
-func websocketPath(runtimePath string) string {
+func websocketRoutes(runtimePath string) map[string]int {
 	data, err := os.ReadFile(runtimePath)
 	if err != nil {
-		return "/"
+		return nil
 	}
 	var doc struct {
 		Inbounds []struct {
-			Transport struct {
+			ListenPort int `json:"listen_port"`
+			Transport  struct {
 				Type string `json:"type"`
 				Path string `json:"path"`
 			} `json:"transport"`
 		} `json:"inbounds"`
 	}
 	if json.Unmarshal(data, &doc) != nil {
-		return "/"
+		return nil
 	}
+	routes := make(map[string]int)
 	for _, in := range doc.Inbounds {
-		if in.Transport.Type == "ws" && strings.HasPrefix(in.Transport.Path, "/") {
-			return in.Transport.Path
+		if in.ListenPort > 0 && in.Transport.Type == "ws" && strings.HasPrefix(in.Transport.Path, "/") {
+			routes[in.Transport.Path] = in.ListenPort
 		}
 	}
-	return "/"
+	return routes
+}
+
+func websocketPaths(runtimePath string) []string {
+	paths := make([]string, 0)
+	for path := range websocketRoutes(runtimePath) {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 func validTunnelConnectPort(kind string, port int) bool {
