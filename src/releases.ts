@@ -1,5 +1,5 @@
 import { HttpError } from "./http";
-import { AGENT_VERSION, RELEASE_DIGESTS, SING_BOX_VERSION } from "./generated-releases";
+import { AGENT_VERSION, CLOUDFLARED_VERSION, RELEASE_DIGESTS, SING_BOX_VERSION } from "./generated-releases";
 
 export function installManifest(request: Request): Response {
   const url = new URL(request.url);
@@ -8,11 +8,12 @@ export function installManifest(request: Request): Response {
   if (os !== "linux" || !arch || !(arch in RELEASE_DIGESTS)) throw new HttpError(400, "unsupported install platform");
   const selected = RELEASE_DIGESTS[arch];
   const singBoxFile = `sing-box-${SING_BOX_VERSION}-linux-${arch}.tar.gz`;
-  return Response.json({ schema_version: 1, channel: "stable", platform: { os, arch },
+  return Response.json({ schema_version: 2, channel: "stable", platform: { os, arch },
     agent: { version: AGENT_VERSION, urls: [`${url.origin}/downloads/v${AGENT_VERSION}/nodemanage-agent-linux-${arch}`], sha256: selected.agentSha256 },
     sing_box: { version: SING_BOX_VERSION, urls: [
       `${url.origin}/downloads/v${SING_BOX_VERSION}/${singBoxFile}`,
       `https://github.com/SagerNet/sing-box/releases/download/v${SING_BOX_VERSION}/${singBoxFile}`,
     ], sha256: selected.singBoxSha256, archive_root: singBoxFile.replace(/\.tar\.gz$/, "") },
+    cloudflared: { version: CLOUDFLARED_VERSION, urls: [`https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-${arch}`], sha256: selected.cloudflaredSha256 },
   }, { headers: { "cache-control": "public, max-age=300", "content-type": "application/json; charset=utf-8", "x-content-type-options": "nosniff" } });
 }

@@ -7,19 +7,20 @@ import (
 )
 
 type installLayout struct {
-	Mode          string
-	BinDir        string
-	AgentPath     string
-	SingBoxPath   string
-	AgentConfig   string
-	RuntimeDir    string
-	RuntimeConfig string
-	StateRoot     string
-	ReleasesRoot  string
-	BackupRoot    string
-	ClaimPath     string
-	LogPath       string
-	ServiceDir    string
+	Mode            string
+	BinDir          string
+	AgentPath       string
+	SingBoxPath     string
+	CloudflaredPath string
+	AgentConfig     string
+	RuntimeDir      string
+	RuntimeConfig   string
+	StateRoot       string
+	ReleasesRoot    string
+	BackupRoot      string
+	ClaimPath       string
+	LogPath         string
+	ServiceDir      string
 }
 
 func resolveInstallMode(requested string) (string, error) {
@@ -51,7 +52,7 @@ func absoluteEnv(name, fallback string) string {
 func layoutForMode(mode string) (installLayout, error) {
 	if mode == "system" {
 		return installLayout{
-			Mode: "system", BinDir: "/usr/local/bin", AgentPath: "/usr/local/bin/nodemanage-agent", SingBoxPath: "/usr/local/bin/sing-box",
+			Mode: "system", BinDir: "/usr/local/bin", AgentPath: "/usr/local/bin/nodemanage-agent", SingBoxPath: "/usr/local/bin/sing-box", CloudflaredPath: "/usr/local/bin/cloudflared",
 			AgentConfig: "/etc/nodemanage/agent.json", RuntimeDir: "/etc/sing-box", RuntimeConfig: "/etc/sing-box/config.json",
 			StateRoot: "/etc/nodemanage", ReleasesRoot: "/etc/nodemanage/releases", BackupRoot: "/usr/local/lib/nodemanage/backups",
 			ClaimPath: "/etc/nodemanage/install-claim", LogPath: "/var/log/nodemanage-install.log", ServiceDir: "/etc/systemd/system",
@@ -71,7 +72,7 @@ func layoutForMode(mode string) (installLayout, error) {
 	stateRoot := filepath.Join(stateHome, "nodemanage")
 	runtimeDir := filepath.Join(configRoot, "sing-box")
 	return installLayout{
-		Mode: "user", BinDir: binDir, AgentPath: filepath.Join(binDir, "nodemanage-agent"), SingBoxPath: filepath.Join(binDir, "sing-box"),
+		Mode: "user", BinDir: binDir, AgentPath: filepath.Join(binDir, "nodemanage-agent"), SingBoxPath: filepath.Join(binDir, "sing-box"), CloudflaredPath: filepath.Join(binDir, "cloudflared"),
 		AgentConfig: filepath.Join(configRoot, "agent.json"), RuntimeDir: runtimeDir, RuntimeConfig: filepath.Join(runtimeDir, "config.json"),
 		StateRoot: stateRoot, ReleasesRoot: filepath.Join(stateRoot, "releases"), BackupRoot: filepath.Join(stateRoot, "backups"),
 		ClaimPath: filepath.Join(stateRoot, "install-claim"), LogPath: filepath.Join(stateRoot, "install.log"), ServiceDir: filepath.Join(configHome, "systemd", "user"),
@@ -94,6 +95,9 @@ func layoutFromConfig(cfg config) (installLayout, error) {
 	}
 	if cfg.SingBoxPath != "" {
 		layout.SingBoxPath = cfg.SingBoxPath
+	}
+	if cfg.CloudflaredPath != "" {
+		layout.CloudflaredPath = cfg.CloudflaredPath
 	}
 	if cfg.RuntimePath != "" {
 		layout.RuntimeConfig = cfg.RuntimePath

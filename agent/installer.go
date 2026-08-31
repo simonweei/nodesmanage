@@ -37,6 +37,7 @@ type releaseManifest struct {
 	SchemaVersion int         `json:"schema_version"`
 	Agent         releaseFile `json:"agent"`
 	SingBox       releaseFile `json:"sing_box"`
+	Cloudflared   releaseFile `json:"cloudflared"`
 }
 
 type platformInfo struct {
@@ -90,6 +91,11 @@ func installCommand(args []string) {
 	name := flags.String("name", "", "agent display name")
 	modeFlag := flags.String("mode", "auto", "install mode: auto, system or user")
 	manifestURL := flags.String("manifest", "", "release manifest URL")
+	ingressMode := flags.String("ingress-mode", "direct", "ingress mode: direct or cloudflare_tunnel")
+	tunnelKind := flags.String("tunnel-kind", "none", "tunnel kind: none, quick or named")
+	tunnelHostname := flags.String("tunnel-hostname", "", "named tunnel public hostname")
+	tunnelToken := flags.String("tunnel-token", "", "named tunnel token")
+	originPort := flags.Int("origin-port", 0, "local tunnel origin port")
 	_ = flags.Parse(args)
 	client := &http.Client{Timeout: 90 * time.Second}
 	mode, modeErr := resolveInstallMode(*modeFlag)
@@ -107,6 +113,19 @@ func installCommand(args []string) {
 	}
 	if *server == "" || *ticket == "" || *name == "" {
 		fatal("[NM-E202] --server, --ticket and --name are required")
+	}
+	if *ingressMode != "direct" && *ingressMode != "cloudflare_tunnel" {
+		fatal("[NM-E202] --ingress-mode must be direct or cloudflare_tunnel")
+	}
+	if *ingressMode == "direct" {
+		*tunnelKind = "none"
+	} else {
+		if (*tunnelKind != "quick" && *tunnelKind != "named") || *originPort <= 1024 || *originPort > 65535 {
+			fatal("[NM-E202] tunnel deployment requires --tunnel-kind quick|named and --origin-port 1025-65535")
+		}
+		if *tunnelKind == "named" && (*tunnelHostname == "" || *tunnelToken == "") {
+			fatal("[NM-E202] named tunnel requires --tunnel-hostname and --tunnel-token")
+		}
 	}
 	if *manifestURL == "" {
 		*manifestURL = strings.TrimRight(*server, "/") + "/api/install/manifest?os=linux&arch=" + runtime.GOARCH
@@ -131,7 +150,7 @@ func installCommand(args []string) {
 		reporter.report("failed", "NM-E204", err.Error(), sourceHost(*manifestURL))
 		fatal("[NM-E204] fetch release manifest: " + err.Error())
 	}
-	if manifest.SchemaVersion != 1 || len(manifest.Agent.URLs) == 0 || len(manifest.SingBox.URLs) == 0 {
+	if manifest.SchemaVersion != 2 || len(manifest.Agent.URLs) == 0 || len(manifest.SingBox.URLs) == 0 || (*ingressMode == "cloudflare_tunnel" && len(manifest.Cloudflared.URLs) == 0) {
 		reporter.report("failed", "NM-E204", "invalid release manifest", sourceHost(*manifestURL))
 		fatal("[NM-E204] invalid release manifest")
 	}
@@ -169,10 +188,25 @@ func installCommand(args []string) {
 		reporter.report("failed", "NM-E209", err.Error(), "local")
 		fatal(err.Error())
 	}
+	cloudflaredFile := filepath.Join(temporary, "cloudflared")
+	if *ingressMode == "cloudflare_tunnel" {
+		source, downloadErr := downloadVerifiedSources(client, manifest.Cloudflared.URLs, cloudflaredFile, manifest.Cloudflared.SHA256)
+		if downloadErr != nil {
+			reporter.report("failed", "NM-E208", downloadErr.Error(), "all-sources")
+			fatal(downloadErr.Error())
+		}
+		reporter.report("tunnel_downloaded", "", "cloudflared binary downloaded and verified", sourceHost(source))
+	}
 	for _, operation := range []func() error{
 		func() error { return os.MkdirAll(layout.BinDir, 0755) },
 		func() error { return installExecutable(agentFile, layout.AgentPath) },
 		func() error { return installExecutable(singBoxFile, layout.SingBoxPath) },
+		func() error {
+			if *ingressMode == "cloudflare_tunnel" {
+				return installExecutable(cloudflaredFile, layout.CloudflaredPath)
+			}
+			return nil
+		},
 		func() error { return os.MkdirAll(layout.RuntimeDir, 0700) },
 	} {
 		if err := operation(); err != nil {
@@ -192,7 +226,7 @@ func installCommand(args []string) {
 	}
 	reporter.report("runtime_installed", "", "Agent and sing-box installed atomically", "local")
 	if _, err := os.Stat(layout.AgentConfig); errors.Is(err, os.ErrNotExist) {
-		if err := registerTicket(client, strings.TrimRight(*server, "/"), *ticket, *name, layout.AgentConfig, platform, layout); err != nil {
+		if err := registerTicket(client, strings.TrimRight(*server, "/"), *ticket, *name, layout.AgentConfig, platform, layout, *ingressMode, *tunnelKind, *tunnelHostname, *tunnelToken, *originPort); err != nil {
 			reporter.report("failed", "NM-E205", err.Error(), sourceHost(*server))
 			fatal(err.Error())
 		}
@@ -283,6 +317,17 @@ func repairCommand(args []string) {
 			fatal("[NM-E210] " + err.Error())
 		}
 	}
+	if cfg.IngressMode == "cloudflare_tunnel" && !strings.Contains(commandOutput(layout.CloudflaredPath, "version"), manifest.Cloudflared.Version) {
+		download := filepath.Join(temporary, "cloudflared")
+		if _, err := downloadVerifiedSources(client, manifest.Cloudflared.URLs, download, manifest.Cloudflared.SHA256); err != nil {
+			reporter.report("failed", "NM-E208", err.Error(), "all-sources")
+			fatal(err.Error())
+		}
+		if err := installExecutable(download, layout.CloudflaredPath); err != nil {
+			reporter.report("failed", "NM-E210", err.Error(), "local")
+			fatal("[NM-E210] " + err.Error())
+		}
+	}
 	if err := os.MkdirAll(layout.RuntimeDir, 0700); err != nil {
 		fatal("[NM-E210] " + err.Error())
 	}
@@ -350,7 +395,8 @@ func upgradeCommand(args []string) {
 	}
 	agentBackup := filepath.Join(backupRoot, "nodemanage-agent.previous")
 	singBoxBackup := filepath.Join(backupRoot, "sing-box.previous")
-	agentChanged, runtimeChanged := false, false
+	cloudflaredBackup := filepath.Join(backupRoot, "cloudflared.previous")
+	agentChanged, runtimeChanged, tunnelChanged := false, false, false
 
 	if commandOutput(layout.AgentPath, "version") != manifest.Agent.Version {
 		download := filepath.Join(temporary, "nodemanage-agent")
@@ -398,6 +444,28 @@ func upgradeCommand(args []string) {
 		}
 		runtimeChanged = true
 	}
+	if cfg.IngressMode == "cloudflare_tunnel" && !strings.Contains(commandOutput(layout.CloudflaredPath, "version"), manifest.Cloudflared.Version) {
+		download := filepath.Join(temporary, "cloudflared")
+		if _, err := downloadVerifiedSources(client, manifest.Cloudflared.URLs, download, manifest.Cloudflared.SHA256); err != nil {
+			reporter.report("failed", "NM-E208", err.Error(), "all-sources")
+			fatal(err.Error())
+		}
+		if fileExists(layout.CloudflaredPath) {
+			if err := copyExecutable(layout.CloudflaredPath, cloudflaredBackup); err != nil {
+				fatal("[NM-E233] backup cloudflared: " + err.Error())
+			}
+		}
+		if err := installExecutable(download, layout.CloudflaredPath); err != nil {
+			fatal("[NM-E233] install cloudflared: " + err.Error())
+		}
+		if !strings.Contains(commandOutput(layout.CloudflaredPath, "version"), manifest.Cloudflared.Version) {
+			if fileExists(cloudflaredBackup) {
+				_ = installExecutable(cloudflaredBackup, layout.CloudflaredPath)
+			}
+			fatal("[NM-E234] new cloudflared failed version check")
+		}
+		tunnelChanged = true
+	}
 	if runtimeChanged {
 		if err := restartService(cfg.InitSystem, cfg.InstallMode, "sing-box"); err != nil {
 			rollbackExecutables(layout, agentChanged, true, agentBackup, singBoxBackup)
@@ -413,14 +481,17 @@ func upgradeCommand(args []string) {
 			fatal("[NM-E235] sing-box is inactive after upgrade")
 		}
 	}
-	if agentChanged {
+	if tunnelChanged {
+		stopTunnel(cfg)
+	}
+	if agentChanged || tunnelChanged {
 		if err := restartService(cfg.InitSystem, cfg.InstallMode, "nodemanage-agent"); err != nil {
 			rollbackExecutables(layout, true, runtimeChanged, agentBackup, singBoxBackup)
 			reporter.report("failed", "NM-E235", err.Error(), "local")
 			fatal("[NM-E235] restart Agent: " + err.Error())
 		}
 	}
-	if !agentChanged && !runtimeChanged {
+	if !agentChanged && !runtimeChanged && !tunnelChanged {
 		reporter.report("upgraded", "", "Binaries already match stable manifest", "local")
 	} else {
 		reporter.report("upgraded", "", "Binary upgrade completed", "worker-assets")
@@ -457,9 +528,10 @@ func diagnoseCommand() {
 	platform.InstallMode = layout.Mode
 	result := map[string]any{"platform": platform, "is_root": os.Geteuid() == 0,
 		"agent_installed": commandOK(layout.AgentPath, "version"), "sing_box_installed": commandOK(layout.SingBoxPath, "version"),
-		"agent_config": fileExists(layout.AgentConfig), "runtime_config": fileExists(layout.RuntimeConfig),
+		"cloudflared_installed": commandOK(layout.CloudflaredPath, "version"),
+		"agent_config":          fileExists(layout.AgentConfig), "runtime_config": fileExists(layout.RuntimeConfig),
 		"agent_running": serviceActive(platform.InitSystem, layout.Mode, "nodemanage-agent"), "sing_box_running": serviceActive(platform.InitSystem, layout.Mode, "sing-box"),
-		"paths": map[string]string{"agent": layout.AgentPath, "sing_box": layout.SingBoxPath, "config": layout.AgentConfig, "runtime": layout.RuntimeConfig, "state": layout.StateRoot}}
+		"paths": map[string]string{"agent": layout.AgentPath, "sing_box": layout.SingBoxPath, "cloudflared": layout.CloudflaredPath, "config": layout.AgentConfig, "runtime": layout.RuntimeConfig, "state": layout.StateRoot}}
 	data, _ := json.MarshalIndent(result, "", "  ")
 	fmt.Println(string(data))
 }
@@ -487,6 +559,7 @@ func uninstallCommand(args []string) {
 	}
 	_ = os.Remove(layout.AgentPath)
 	_ = os.Remove(layout.SingBoxPath)
+	_ = os.Remove(layout.CloudflaredPath)
 	if *purge {
 		_ = os.RemoveAll(filepath.Dir(layout.AgentConfig))
 		if filepath.Clean(layout.RuntimeDir) != filepath.Clean(filepath.Dir(layout.AgentConfig)) {
@@ -525,7 +598,7 @@ func maintenanceContext(configPath, errorCode string) (config, installLayout, er
 	return cfg, layout, nil
 }
 
-func registerTicket(client *http.Client, server, ticket, name, configPath string, platform platformInfo, layout installLayout) error {
+func registerTicket(client *http.Client, server, ticket, name, configPath string, platform platformInfo, layout installLayout, ingressMode, tunnelKind, tunnelHostname, tunnelToken string, originPort int) error {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return err
@@ -556,7 +629,8 @@ func registerTicket(client *http.Client, server, ticket, name, configPath string
 		return errors.New("[NM-E206] registration returned empty credentials")
 	}
 	cfg := config{ServerURL: server, AgentID: response.AgentID, AgentToken: response.AgentToken, PollSeconds: response.PollSeconds,
-		SingBoxPath: layout.SingBoxPath, ServiceName: "sing-box", RuntimePath: layout.RuntimeConfig, StatePath: layout.StateRoot, InitSystem: platform.InitSystem, InstallMode: platform.InstallMode}
+		SingBoxPath: layout.SingBoxPath, CloudflaredPath: layout.CloudflaredPath, ServiceName: "sing-box", RuntimePath: layout.RuntimeConfig, StatePath: layout.StateRoot, InitSystem: platform.InitSystem, InstallMode: platform.InstallMode,
+		IngressMode: ingressMode, TunnelKind: tunnelKind, TunnelHostname: tunnelHostname, TunnelToken: tunnelToken, TunnelOriginPort: originPort}
 	if cfg.PollSeconds < 15 {
 		cfg.PollSeconds = 60
 	}

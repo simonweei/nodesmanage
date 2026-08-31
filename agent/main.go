@@ -20,21 +20,27 @@ import (
 )
 
 const (
-	version          = "0.6.0"
+	version          = "0.7.0"
 	maxResponseBytes = 3 << 20
 )
 
 type config struct {
-	ServerURL   string `json:"server_url"`
-	AgentID     string `json:"agent_id"`
-	AgentToken  string `json:"agent_token"`
-	PollSeconds int    `json:"poll_seconds"`
-	SingBoxPath string `json:"sing_box_path"`
-	ServiceName string `json:"service_name"`
-	RuntimePath string `json:"runtime_config_path"`
-	StatePath   string `json:"state_path"`
-	InitSystem  string `json:"init_system"`
-	InstallMode string `json:"install_mode"`
+	ServerURL        string `json:"server_url"`
+	AgentID          string `json:"agent_id"`
+	AgentToken       string `json:"agent_token"`
+	PollSeconds      int    `json:"poll_seconds"`
+	SingBoxPath      string `json:"sing_box_path"`
+	CloudflaredPath  string `json:"cloudflared_path,omitempty"`
+	ServiceName      string `json:"service_name"`
+	RuntimePath      string `json:"runtime_config_path"`
+	StatePath        string `json:"state_path"`
+	InitSystem       string `json:"init_system"`
+	InstallMode      string `json:"install_mode"`
+	IngressMode      string `json:"ingress_mode"`
+	TunnelKind       string `json:"tunnel_kind,omitempty"`
+	TunnelHostname   string `json:"tunnel_hostname,omitempty"`
+	TunnelToken      string `json:"tunnel_token,omitempty"`
+	TunnelOriginPort int    `json:"tunnel_origin_port,omitempty"`
 }
 
 type permissions struct {
@@ -57,17 +63,22 @@ type permissions struct {
 }
 
 type syncRequest struct {
-	AgentVersion     string      `json:"agent_version"`
-	SingBoxVersion   string      `json:"singbox_version"`
-	CurrentRevision  *int64      `json:"current_revision"`
-	SingBoxRunning   bool        `json:"singbox_running"`
-	CPUUsagePercent  float64     `json:"cpu_usage_percent"`
-	UptimeSeconds    int64       `json:"uptime_seconds"`
-	MemoryTotalBytes int64       `json:"memory_total_bytes"`
-	MemoryUsedBytes  int64       `json:"memory_used_bytes"`
-	DiskTotalBytes   int64       `json:"disk_total_bytes"`
-	DiskUsedBytes    int64       `json:"disk_used_bytes"`
-	Permissions      permissions `json:"permissions"`
+	AgentVersion       string      `json:"agent_version"`
+	SingBoxVersion     string      `json:"singbox_version"`
+	CurrentRevision    *int64      `json:"current_revision"`
+	SingBoxRunning     bool        `json:"singbox_running"`
+	CPUUsagePercent    float64     `json:"cpu_usage_percent"`
+	UptimeSeconds      int64       `json:"uptime_seconds"`
+	MemoryTotalBytes   int64       `json:"memory_total_bytes"`
+	MemoryUsedBytes    int64       `json:"memory_used_bytes"`
+	DiskTotalBytes     int64       `json:"disk_total_bytes"`
+	DiskUsedBytes      int64       `json:"disk_used_bytes"`
+	Permissions        permissions `json:"permissions"`
+	CloudflaredVersion string      `json:"cloudflared_version,omitempty"`
+	TunnelRunning      bool        `json:"tunnel_running"`
+	TunnelHostname     string      `json:"tunnel_hostname,omitempty"`
+	TunnelError        string      `json:"tunnel_error,omitempty"`
+	IngressVerified    bool        `json:"ingress_verified"`
 }
 
 type syncResponse struct {
@@ -78,10 +89,11 @@ type syncResponse struct {
 }
 
 type agent struct {
-	configPath  string
-	config      config
-	client      *http.Client
-	previousCPU cpuSample
+	configPath      string
+	config          config
+	client          *http.Client
+	previousCPU     cpuSample
+	lastTunnelError string
 }
 
 type cpuSample struct {
@@ -122,6 +134,12 @@ func run(args []string, once bool) {
 	a := &agent{configPath: *configPath, client: &http.Client{Timeout: 20 * time.Second}}
 	must(a.loadConfig())
 	for {
+		if err := a.ensureTunnel(); err != nil {
+			a.lastTunnelError = err.Error()
+			fmt.Fprintf(os.Stderr, "tunnel: %v\n", err)
+		} else {
+			a.lastTunnelError = ""
+		}
 		if err := a.sync(); err != nil {
 			fmt.Fprintf(os.Stderr, "sync failed: %v\n", err)
 			if once {
@@ -149,6 +167,20 @@ func (a *agent) loadConfig() error {
 	if a.config.InstallMode != "system" && a.config.InstallMode != "user" {
 		return errors.New("agent configuration has an invalid install_mode")
 	}
+	if a.config.IngressMode == "" {
+		a.config.IngressMode = "direct"
+	}
+	if a.config.IngressMode != "direct" && a.config.IngressMode != "cloudflare_tunnel" {
+		return errors.New("agent configuration has an invalid ingress_mode")
+	}
+	if a.config.IngressMode == "cloudflare_tunnel" {
+		if a.config.CloudflaredPath == "" || (a.config.TunnelKind != "quick" && a.config.TunnelKind != "named") || a.config.TunnelOriginPort <= 1024 || a.config.TunnelOriginPort > 65535 {
+			return errors.New("agent tunnel configuration is incomplete")
+		}
+		if a.config.TunnelKind == "named" && (a.config.TunnelHostname == "" || a.config.TunnelToken == "") {
+			return errors.New("named tunnel requires hostname and token")
+		}
+	}
 	return nil
 }
 
@@ -163,6 +195,22 @@ func (a *agent) sync() error {
 		CPUUsagePercent:  cpuUsage,
 		MemoryTotalBytes: memoryTotal, MemoryUsedBytes: memoryUsed, DiskTotalBytes: diskTotal, DiskUsedBytes: diskUsed,
 		Permissions: collectPermissions(a.config),
+	}
+	if a.config.IngressMode == "cloudflare_tunnel" {
+		request.CloudflaredVersion = commandOutput(a.config.CloudflaredPath, "version")
+		request.TunnelRunning = tunnelActive(a.config)
+		request.TunnelHostname = a.config.TunnelHostname
+		if a.config.TunnelKind == "quick" {
+			request.TunnelHostname = quickTunnelHostname(a.config)
+		}
+		request.TunnelError = a.lastTunnelError
+		if request.TunnelRunning && request.TunnelHostname != "" {
+			if err := probeTunnel(a.client, request.TunnelHostname, websocketPath(a.config.RuntimePath)); err == nil {
+				request.IngressVerified = true
+			} else if request.TunnelError == "" {
+				request.TunnelError = err.Error()
+			}
+		}
 	}
 	var response syncResponse
 	if err := postJSON(a.client, a.config.ServerURL+"/api/agent/sync", a.config.AgentToken, request, &response); err != nil {

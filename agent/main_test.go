@@ -177,6 +177,20 @@ func TestReadRevision(t *testing.T) {
 	}
 }
 
+func TestQuickTunnelHostnameUsesLatestLogEntry(t *testing.T) {
+	state := t.TempDir()
+	cfg := config{StatePath: state}
+	log := "INF Your quick Tunnel has been created! Visit it at https://first.trycloudflare.com\nINF https://latest-name.trycloudflare.com\n"
+	if err := os.WriteFile(tunnelLogPath(cfg), []byte(log), 0600); err != nil { t.Fatal(err) }
+	if got := quickTunnelHostname(cfg); got != "latest-name.trycloudflare.com" { t.Fatalf("hostname = %q", got) }
+}
+
+func TestWebsocketPathReadsActiveRuntime(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"inbounds":[{"transport":{"type":"ws","path":"/edge"}}]}`), 0600); err != nil { t.Fatal(err) }
+	if got := websocketPath(path); got != "/edge" { t.Fatalf("path = %q", got) }
+}
+
 func TestPostJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer token" {

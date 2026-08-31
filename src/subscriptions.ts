@@ -3,12 +3,18 @@ import type { ClientRecord, NodeRecord, ProfileSettings } from "./domain";
 interface ExpandedNode extends NodeRecord { settings: ProfileSettings }
 const expand = (nodes: NodeRecord[]): ExpandedNode[] => nodes.flatMap((node) => {
   const profiles = node.protocols_json ? JSON.parse(node.protocols_json) as { type: NodeRecord["type"]; settings: ProfileSettings }[] : [{ type: node.type, settings: JSON.parse(node.settings_json) as ProfileSettings }];
-  return profiles.map((profile) => ({ ...node, type: profile.type, settings: profile.settings }));
+  return profiles.map((profile) => ({ ...node, type: profile.type, settings: node.ingress_mode === "cloudflare_tunnel" ? {
+    ...profile.settings,
+    listen_port: node.connect_port || 443,
+    server_address: node.connect_host,
+    tls_server_name: node.connect_host,
+    websocket_host: node.connect_host,
+  } : profile.settings }));
 });
 const uriHost = (address: string): string => address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
 const yaml = (value: string): string => JSON.stringify(value);
 const tag = (node: ExpandedNode): string => `${node.name} · ${node.type}`;
-const address = (node: ExpandedNode): string => node.settings.server_address || node.address;
+const address = (node: ExpandedNode): string => node.settings.server_address || node.connect_host;
 const clientTls = (settings: ProfileSettings, alpn?: string[]): Record<string, unknown> => ({
   enabled: true, server_name: settings.tls_server_name,
   ...(alpn ? { alpn } : {}),

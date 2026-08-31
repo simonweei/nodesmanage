@@ -1,13 +1,14 @@
 # NodeManage
 
-部署在 Cloudflare Worker 上的精简 sing-box 节点管理平台。Cloudflare 仅承载管理控制面和客户端订阅，代理 TCP/UDP 流量始终由客户端直连 VPS。
+部署在 Cloudflare Worker 上的精简 sing-box 节点管理平台。控制面、订阅和 D1 位于 Cloudflare；数据面可选择显式公网地址直连 VPS，或让 VLESS WebSocket 经 Cloudflare Tunnel 进入只监听本机回环地址的 sing-box。
 
 ## 组件
 
 - 一个 Cloudflare Worker（API + 静态管理界面）
 - 一个 D1 数据库
 - 一个静态 Go Agent
-- VPS 上的 sing-box + systemd/OpenRC（系统级）、systemd 用户服务（非 root），或无 init 容器的 standalone 进程模式
+- VPS 上固定版本的 sing-box，以及 Tunnel 模式下固定版本的 cloudflared
+- systemd/OpenRC（系统级）、systemd 用户服务（非 root），或无 init 容器的 standalone 进程模式
 
 没有 KV、R2、Queue、Durable Objects、WebSocket、远程 Shell 或动态脚本执行。D1 中的 `reconcile_queue` 与业务变更同事务写入，Cron 每 5 分钟重试配置发布、维护告警并清理过期数据。
 
@@ -66,11 +67,11 @@ AGENT_TOKEN_SECRET="至少三十二位的独立随机值"
 管理界面只有 **VPS** 和 **订阅** 两个主版块，桌面端使用紧凑表格，移动端自动切换为卡片和全屏编辑抽屉。
 
 1. 在 VPS 列表点击“创建 VPS”，选择协议组合并确认少量必要参数。Reality 密钥、Short ID、Shadowsocks 主密码和 Hysteria2 混淆密码均由 Worker 自动生成。
-2. 创建 VPS 时选择系统级或用户级部署，再复制一次性安装命令并在 15 分钟内执行。票据成功注册后立即失效，重新生成也会使旧票据失效。
+2. 创建 VPS 时选择 Direct 或 Cloudflare Tunnel，以及系统级或用户级部署，再复制一次性安装命令并在 15 分钟内执行。票据成功注册后立即失效，重新生成也会使旧票据失效。
    Bootstrap 只依赖基础 POSIX shell、`curl`/`wget`/BusyBox 之一以及任一常见 SHA-256 工具；它只下载并校验 Agent。
-   Agent 根据系统环境安装固定版本的 sing-box 1.13.12，所有二进制均使用固定 SHA-256 摘要验证，并配置 systemd、OpenRC 或 standalone 进程管理。
+   Agent 根据系统环境安装固定版本的 sing-box 1.13.12；Tunnel 模式还会安装 cloudflared 2026.8.2。所有二进制均使用固定 SHA-256 摘要验证，并配置 systemd、OpenRC 或 standalone 进程管理。
 3. 在订阅列表创建订阅，选择一个或多个已安装 VPS，再添加一个或多个客户端。每个客户端拥有独立凭据和订阅 Token；创建、编辑、停用或删除会自动发布所有受影响 VPS。
-4. Agent 拉取修订后先执行 `sing-box check`，再通过 `/etc/nodemanage/releases` 下的 A/B 目录原子切换；重启失败时切回 `previous`。订阅只返回已经应用目标修订、Agent 在线且 sing-box 正常运行的节点。
+4. Agent 拉取修订后先执行 `sing-box check`，再通过 `/etc/nodemanage/releases` 下的 A/B 目录原子切换；重启失败时切回 `previous`。Tunnel 节点还必须通过公网 WebSocket Upgrade 探测，订阅只返回入口已验证、目标修订已应用、Agent 在线且 sing-box 正常运行的节点。
 
 VPS 列表集中显示 Agent/sing-box/配置版本、CPU/内存/运行时间、在线状态、配置同步状态和常用操作。订阅 Token 和链接只在创建响应中显示一次。
 
@@ -88,7 +89,9 @@ curl -fsSL https://管理域名/install.sh | sh -s -- --ticket 一次性票据 -
 
 常规用户级部署使用 systemd 用户管理器。若 VPS 没有持续登录会话，管理员需执行 `loginctl enable-linger 用户名`；这一步属于系统策略，Agent 不会自行提权修改。无 systemd/OpenRC 时会自动回退 standalone，OpenRC 当前仅支持系统级部署。
 
-当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.6.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box 与 Agent。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
+当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.7.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
+
+Tunnel 模式固定使用 VLESS + WebSocket：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，并在一次性安装命令中填写已配置路由的域名和 Tunnel Token。Token 不写入 D1，只保存在 VPS 的 `0600` Agent 配置中。系统不会再把 Worker 看到的请求出口 IP 当作订阅地址。
 
 生产协议包括：
 

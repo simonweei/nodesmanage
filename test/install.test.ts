@@ -22,13 +22,17 @@ describe("portable bootstrap", () => {
 
   it("returns a pinned, checksummed release", async () => {
     const response = installManifest(new Request("https://manage.example.com/api/install/manifest?os=linux&arch=arm64"));
-    const manifest = await response.json() as { agent: { urls: string[]; sha256: string }; sing_box: { version: string; urls: string[]; sha256: string } };
-    expect(manifest.agent.urls).toEqual(["https://manage.example.com/downloads/v0.6.0/nodemanage-agent-linux-arm64"]);
+    const manifest = await response.json() as { schema_version: number; agent: { urls: string[]; sha256: string }; sing_box: { version: string; urls: string[]; sha256: string }; cloudflared: { version: string; urls: string[]; sha256: string } };
+    expect(manifest.schema_version).toBe(2);
+    expect(manifest.agent.urls).toEqual(["https://manage.example.com/downloads/v0.7.0/nodemanage-agent-linux-arm64"]);
     expect(manifest.agent.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(manifest.sing_box).toMatchObject({ version: "1.13.12" });
     expect(manifest.sing_box.urls[0]).toContain("manage.example.com/downloads/v1.13.12/");
     expect(manifest.sing_box.urls[1]).toContain("github.com/SagerNet/");
     expect(manifest.sing_box.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(manifest.cloudflared).toMatchObject({ version: "2026.8.2" });
+    expect(manifest.cloudflared.urls[0]).toContain("github.com/cloudflare/cloudflared/releases/download/2026.8.2/");
+    expect(manifest.cloudflared.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("derives stable and separated idempotent credentials", async () => {

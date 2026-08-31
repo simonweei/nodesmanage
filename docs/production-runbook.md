@@ -52,6 +52,7 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 ## 故障处理
 
 - Agent 离线：在 VPS 执行 `nodemanage-agent diagnose`，检查服务、DNS、系统时间和到 Worker HTTPS 的出站访问；随后执行 `nodemanage-agent repair`。
+- Tunnel 未验证：检查 Agent 状态中的 `tunnel_error`、VPS 上的 `cloudflared.log`、本机 sing-box WebSocket 入站和外网 HTTPS 出站。Quick Tunnel 仅用于诊断；Named Tunnel 同时确认 Public Hostname 路由指向 `http://127.0.0.1:本地端口`。未通过公网 WebSocket Upgrade 探测的节点不会进入订阅。
 - standalone 环境离线：检查 `/etc/nodemanage/nodemanage-agent.log`、`/etc/nodemanage/sing-box.log` 和对应 `.pid` 文件。受管容器重建后不会自动恢复进程，重新执行安装命令或 `nodemanage-agent repair`；长期生产节点应迁移到带 systemd/OpenRC 的 VPS。
 - 配置失败：面板查看错误及安装事件。Agent 会在 `sing-box check` 或重启失败时回滚到 previous；修正 Profile 后保存会自动生成新修订。
 - 配置发布中断：变更与 `reconcile_queue` 在同一个 D1 事务写入，Cron 会重试；也可在面板点击“发布”立即重试。
@@ -63,6 +64,6 @@ npx wrangler d1 execute nodemanage --remote --command "SELECT n.name,a.last_seen
 ## 容量和安全边界
 
 - 单控制面最多 200 台 VPS、200 个订阅组；单次订阅最多 8 台 VPS、10 个初始客户端。
-- 生产协议支持 VLESS Reality + Vision、Shadowsocks AEAD 2022、VLESS TLS + WebSocket、VLESS TLS + gRPC、Hysteria2、TUIC 和 Trojan TLS。TLS/ACME 协议仅允许 system/root，且每台 VPS 最多一个；上线前必须验证 TCP 80、目标 TCP/UDP 端口、DNS 和证书续期。
+- Direct 模式支持 VLESS Reality + Vision、Shadowsocks AEAD 2022、VLESS TLS + WebSocket、VLESS TLS + gRPC、Hysteria2、TUIC 和 Trojan TLS。TLS/ACME 协议仅允许 system/root，且每台 VPS 最多一个；上线前必须验证 TCP 80、目标 TCP/UDP 端口、DNS 和证书续期。Tunnel 模式固定为 VLESS + WebSocket，生产使用 Named Tunnel。
 - 控制面不执行远程 Shell，不下发任意命令。Agent 只接受声明式 sing-box 配置和固定、带 SHA-256 的发布清单。
 - 管理登录和公共 Agent/订阅接口分别使用 Cloudflare Rate Limiting binding。真正的管理域名还应启用 Cloudflare Access 或等价的身份边界。

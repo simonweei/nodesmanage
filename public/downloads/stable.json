@@ -1,16 +1,19 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "channel": "stable",
-  "agent_version": "0.6.0",
+  "agent_version": "0.7.0",
   "sing_box_version": "1.13.12",
+  "cloudflared_version": "2026.8.2",
   "releases": {
     "amd64": {
-      "agentSha256": "54b9e0cd14a22e4ad93a33b91d4c29558f39448110c6cdcb2185b20c9bfe22f3",
-      "singBoxSha256": "1540533adb3df24f5ad5f14b5c7ca3dbc2401b10a1c1eb278fcadcada47ec6c4"
+      "agentSha256": "0c326c21772e6735b33500cd644efdfb90902b99491dcda66ae90a1c4d48e837",
+      "singBoxSha256": "1540533adb3df24f5ad5f14b5c7ca3dbc2401b10a1c1eb278fcadcada47ec6c4",
+      "cloudflaredSha256": "fcfb02b575a52ca1af2e3267af4e1517bcdeb30ac48c834c69abaed3c0576ad2"
     },
     "arm64": {
-      "agentSha256": "0ef55470869b6fb8306f62222f96483534096792e09590455d7e9e93b13d95d2",
-      "singBoxSha256": "1ffa3b48ad6fa98f9fd810482e39bdd5b6157782ef11ce37d67bdcfd9338547a"
+      "agentSha256": "56c5fa46789dd09e0a4bbf99500c8a297b357135cbc19f1672af18fe258a24fc",
+      "singBoxSha256": "1ffa3b48ad6fa98f9fd810482e39bdd5b6157782ef11ce37d67bdcfd9338547a",
+      "cloudflaredSha256": "7747d94570fb390cf47dcb4f9555c193c6355cda9793f0d878d9049e5d6a7790"
     }
   }
 }

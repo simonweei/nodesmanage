@@ -24,10 +24,15 @@ CREATE TABLE agents (
   install_mode TEXT NOT NULL CHECK (install_mode IN ('system', 'user')),
   agent_version TEXT,
   singbox_version TEXT,
-  public_ip TEXT NOT NULL DEFAULT '',
+  cloudflared_version TEXT,
+  observed_egress_ip TEXT NOT NULL DEFAULT '',
   current_revision INTEGER,
   desired_revision INTEGER,
   singbox_running INTEGER NOT NULL DEFAULT 0 CHECK (singbox_running IN (0, 1)),
+  tunnel_running INTEGER NOT NULL DEFAULT 0 CHECK (tunnel_running IN (0, 1)),
+  tunnel_hostname TEXT NOT NULL DEFAULT '',
+  tunnel_error TEXT,
+  capabilities_json TEXT NOT NULL DEFAULT '{}',
   cpu_usage_percent REAL CHECK (cpu_usage_percent IS NULL OR (cpu_usage_percent >= 0 AND cpu_usage_percent <= 100)),
   uptime_seconds INTEGER CHECK (uptime_seconds IS NULL OR uptime_seconds >= 0),
   memory_total_bytes INTEGER CHECK (memory_total_bytes IS NULL OR memory_total_bytes >= 0),
@@ -49,13 +54,21 @@ CREATE TABLE nodes (
   profile_id TEXT NOT NULL,
   name TEXT NOT NULL,
   region TEXT NOT NULL DEFAULT '',
-  address TEXT NOT NULL DEFAULT '',
+  ingress_mode TEXT NOT NULL DEFAULT 'direct' CHECK (ingress_mode IN ('direct', 'cloudflare_tunnel')),
+  tunnel_kind TEXT NOT NULL DEFAULT 'none' CHECK (tunnel_kind IN ('none', 'quick', 'named')),
+  connect_host TEXT NOT NULL DEFAULT '',
+  connect_port INTEGER NOT NULL DEFAULT 0 CHECK (connect_port BETWEEN 0 AND 65535),
+  origin_port INTEGER NOT NULL DEFAULT 0 CHECK (origin_port BETWEEN 0 AND 65535),
+  edge_tls INTEGER NOT NULL DEFAULT 0 CHECK (edge_tls IN (0, 1)),
+  ingress_status TEXT NOT NULL DEFAULT 'pending' CHECK (ingress_status IN ('pending', 'configured', 'connected', 'verified', 'failed')),
+  ingress_verified_at TEXT,
+  last_ingress_error TEXT,
   deployment_mode TEXT NOT NULL DEFAULT 'system' CHECK (deployment_mode IN ('system', 'user')),
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   draft INTEGER NOT NULL DEFAULT 0 CHECK (draft IN (0, 1)),
   retiring INTEGER NOT NULL DEFAULT 0 CHECK (retiring IN (0, 1)),
   install_stage TEXT NOT NULL DEFAULT 'ticket_created' CHECK (install_stage IN (
-    'ticket_created', 'bootstrap_started', 'agent_downloaded', 'runtime_downloaded',
+    'ticket_created', 'bootstrap_started', 'agent_downloaded', 'runtime_downloaded', 'tunnel_downloaded',
     'runtime_installed', 'service_installed', 'registered', 'online', 'upgrading', 'upgraded', 'failed'
   )),
   last_install_error_code TEXT,
@@ -134,7 +147,7 @@ CREATE TABLE install_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   node_id TEXT NOT NULL,
   stage TEXT NOT NULL CHECK (stage IN (
-    'ticket_created', 'bootstrap_started', 'agent_downloaded', 'runtime_downloaded',
+    'ticket_created', 'bootstrap_started', 'agent_downloaded', 'runtime_downloaded', 'tunnel_downloaded',
     'runtime_installed', 'service_installed', 'registered', 'online', 'upgrading', 'upgraded', 'failed'
   )),
   error_code TEXT,
@@ -177,6 +190,7 @@ CREATE INDEX idx_agents_last_seen ON agents(last_seen);
 CREATE INDEX idx_revisions_agent ON revisions(agent_id, id DESC);
 CREATE INDEX idx_nodes_enabled ON nodes(enabled);
 CREATE INDEX idx_nodes_install_stage ON nodes(install_stage);
+CREATE INDEX idx_nodes_ingress_ready ON nodes(ingress_mode, ingress_status, enabled);
 CREATE INDEX idx_subscriptions_group ON subscriptions(group_id);
 CREATE INDEX idx_subscription_group_nodes_node ON subscription_group_nodes(node_id);
 CREATE INDEX idx_install_tickets_node ON install_tickets(node_id);

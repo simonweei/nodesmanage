@@ -6,6 +6,8 @@ export const PROFILE_TYPES = [
   "hysteria2", "tuic", "trojan-tls",
 ] as const;
 export type ProfileType = typeof PROFILE_TYPES[number];
+export type IngressMode = "direct" | "cloudflare_tunnel";
+export type TunnelKind = "none" | "quick" | "named";
 
 export const ACME_PROFILE_TYPES = [
   "vless-tls-websocket", "vless-tls-grpc", "hysteria2", "tuic", "trojan-tls",
@@ -41,7 +43,9 @@ export interface ClientRecord {
 export interface NodeRecord {
   id: string;
   name: string;
-  address: string;
+  connect_host: string;
+  connect_port: number;
+  ingress_mode: IngressMode;
   type: ProfileType;
   settings_json: string;
   protocols_json?: string | null;
@@ -98,7 +102,7 @@ export function parseProfileType(value: unknown): ProfileType {
   return value as ProfileType;
 }
 
-export function parseProfileSettings(type: ProfileType, input: unknown): ProfileSettings {
+export function parseProfileSettings(type: ProfileType, input: unknown, ingressMode: IngressMode = "direct"): ProfileSettings {
   const value = object(input);
   const result: ProfileSettings = { listen_port: port(value.listen_port) };
   if (type === "vless-reality-vision") {
@@ -117,6 +121,12 @@ export function parseProfileSettings(type: ProfileType, input: unknown): Profile
     if (method !== "2022-blake3-aes-128-gcm") throw new HttpError(400, "unsupported Shadowsocks method");
     result.shadowsocks_method = method;
     result.shadowsocks_server_password = string(value.shadowsocks_server_password, "shadowsocks_server_password", 128);
+    return result;
+  }
+  if (type === "vless-tls-websocket" && ingressMode === "cloudflare_tunnel") {
+    const path = string(value.websocket_path, "websocket_path", 256);
+    if (!path.startsWith("/") || /[?#]/.test(path)) throw new HttpError(400, "websocket_path must start with / and cannot contain ? or #");
+    result.websocket_path = path;
     return result;
   }
   if (isAcmeProfile(type)) {
@@ -138,7 +148,10 @@ export function parseProfileSettings(type: ProfileType, input: unknown): Profile
   throw new HttpError(400, "unsupported profile type");
 }
 
-export async function profileDefaults(type: ProfileType, deploymentMode: "system" | "user" = "system"): Promise<ProfileSettings> {
+export async function profileDefaults(type: ProfileType, deploymentMode: "system" | "user" = "system", ingressMode: IngressMode = "direct"): Promise<ProfileSettings> {
+  if (ingressMode === "cloudflare_tunnel" && type === "vless-tls-websocket") {
+    return { listen_port: 18080, websocket_path: "/proxy" };
+  }
   if (type === "vless-reality-vision") {
     const keys = await realityKeypair();
     return {
@@ -175,9 +188,9 @@ function managedTls(settings: ProfileSettings, alpn?: string[]): Record<string, 
   };
 }
 
-export function compileServerConfig(type: ProfileType, settings: ProfileSettings, clients: ClientRecord[]): Record<string, unknown> {
+export function compileServerConfig(type: ProfileType, settings: ProfileSettings, clients: ClientRecord[], ingressMode: IngressMode = "direct"): Record<string, unknown> {
   let inbound: Record<string, unknown>;
-  const base = { tag: `${type}-in`, listen: "::", listen_port: settings.listen_port };
+  const base = { tag: `${type}-in`, listen: ingressMode === "cloudflare_tunnel" ? "127.0.0.1" : "::", listen_port: settings.listen_port };
   switch (type) {
     case "vless-reality-vision":
       inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid, flow: "xtls-rprx-vision" })), tls: { enabled: true, server_name: settings.server_name, reality: { enabled: true, handshake: { server: settings.reality_handshake_server, server_port: settings.reality_handshake_port }, private_key: settings.reality_private_key, short_id: [settings.reality_short_id] } } };
@@ -186,7 +199,7 @@ export function compileServerConfig(type: ProfileType, settings: ProfileSettings
       inbound = { ...base, type: "shadowsocks", method: settings.shadowsocks_method, password: settings.shadowsocks_server_password, users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), multiplex: { enabled: true } };
       break;
     case "vless-tls-websocket":
-      inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid })), tls: managedTls(settings), transport: { type: "ws", path: settings.websocket_path, headers: { Host: settings.websocket_host } } };
+      inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid })), ...(ingressMode === "direct" ? { tls: managedTls(settings) } : {}), transport: { type: "ws", path: settings.websocket_path } };
       break;
     case "vless-tls-grpc":
       inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid })), tls: managedTls(settings, ["h2"]), transport: { type: "grpc", service_name: settings.grpc_service_name } };
@@ -204,9 +217,9 @@ export function compileServerConfig(type: ProfileType, settings: ProfileSettings
   return { log: { level: "info", timestamp: true }, inbounds: [inbound], outbounds: [{ type: "direct", tag: "direct" }, { type: "block", tag: "block" }] };
 }
 
-export function compileServerProfiles(profiles: ProtocolProfile[], clients: ClientRecord[]): Record<string, unknown> {
+export function compileServerProfiles(profiles: ProtocolProfile[], clients: ClientRecord[], ingressMode: IngressMode = "direct"): Record<string, unknown> {
   const inbounds = profiles.flatMap(({ type, settings }) =>
-    compileServerConfig(type, settings, clients).inbounds as Record<string, unknown>[],
+    compileServerConfig(type, settings, clients, ingressMode).inbounds as Record<string, unknown>[],
   );
   return { log: { level: "info", timestamp: true }, inbounds, outbounds: [{ type: "direct", tag: "direct" }, { type: "block", tag: "block" }] };
 }

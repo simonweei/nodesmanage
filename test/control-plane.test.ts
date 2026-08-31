@@ -45,7 +45,7 @@ describe("control-plane production flow", () => {
     const created = await jsonRequest("/api/admin/vps", {
       method: "POST",
       headers: { cookie: adminCookie },
-      body: JSON.stringify({ name: "Tokyo 1", region: "JP", address: "node.example.com", protocols: [{ type: "vless-reality-vision", settings: { listen_port: 443 } }] }),
+      body: JSON.stringify({ name: "Tokyo 1", region: "JP", connect_host: "node.example.com", ingress_mode: "direct", protocols: [{ type: "vless-reality-vision", settings: { listen_port: 443 } }] }),
     });
     expect(created.status).toBe(201);
     const value = await created.json<{ id: string; ticket: string }>();

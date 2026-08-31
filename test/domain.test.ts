@@ -45,7 +45,7 @@ describe("production Protocol Profiles", () => {
 
 describe("subscriptions", () => {
   it.each(cases)("generates sing-box, Mihomo and URI for %s", (type, settings, protocol) => {
-    const node = { id: `node-${type}`, name: "Tokyo", address: "node.example.com", type, settings_json: JSON.stringify(settings) };
+    const node = { id: `node-${type}`, name: "Tokyo", connect_host: "node.example.com", connect_port: settings.listen_port, ingress_mode: "direct" as const, type, settings_json: JSON.stringify(settings) };
     expect((JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { type: string }).type).toBe(protocol);
     expect(mihomoSubscription(client, [node])).toContain("proxies:");
     expect(uriSubscription(client, [node])).toContain(settings.server_address ?? "node.example.com");
@@ -56,9 +56,18 @@ describe("multiple protocols on one VPS", () => {
   it("compiles every selected protocol and expands them in subscriptions", () => {
     const profiles = cases.map(([type, settings]) => ({ type, settings }));
     expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(7);
-    const node = { id: "multi", name: "Tokyo", address: "node.example.com", type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
+    const node = { id: "multi", name: "Tokyo", connect_host: "node.example.com", connect_port: 443, ingress_mode: "direct" as const, type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
     expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(7);
     expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(7);
+  });
+
+  it("terminates TLS at Cloudflare and publishes the verified hostname", () => {
+    const settings = parseProfileSettings("vless-tls-websocket", { listen_port: 18080, websocket_path: "/proxy" }, "cloudflare_tunnel");
+    const inbound = (compileServerConfig("vless-tls-websocket", settings, [client], "cloudflare_tunnel").inbounds as Record<string, unknown>[])[0];
+    expect(inbound).toMatchObject({ listen: "127.0.0.1", listen_port: 18080, transport: { type: "ws", path: "/proxy" } });
+    expect(inbound).not.toHaveProperty("tls");
+    const node = { id: "tunnel", name: "Tunnel", connect_host: "random.trycloudflare.com", connect_port: 443, ingress_mode: "cloudflare_tunnel" as const, type: "vless-tls-websocket" as const, settings_json: JSON.stringify(settings) };
+    expect(uriSubscription(client, [node])).toContain("random.trycloudflare.com:443");
   });
 });
 
