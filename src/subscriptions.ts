@@ -53,12 +53,17 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
   const selectorTag = "节点选择";
   const directTag = "direct";
   const localDnsTag = "local-dns";
+  const fakeIpDnsTag = "fakeip-dns";
   const proxyTags = proxyOutbounds.map((outbound) => String(outbound.tag));
   return JSON.stringify({
     dns: {
       servers: [
         { type: "tls", tag: "proxy-dns", server: "8.8.8.8" },
         { type: "udp", tag: localDnsTag, server: "223.5.5.5" },
+        { type: "fakeip", tag: fakeIpDnsTag, inet4_range: "198.18.0.0/15", inet6_range: "fc00::/18" },
+      ],
+      rules: [
+        { query_type: ["A", "AAAA"], action: "route", server: fakeIpDnsTag },
       ],
     },
     inbounds: [{

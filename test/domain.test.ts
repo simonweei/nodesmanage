@@ -92,7 +92,7 @@ describe("subscriptions", () => {
   it.each(cases)("generates sing-box, Mihomo and URI for %s", (type, settings, protocol) => {
     const node = { id: `node-${type}`, name: "Tokyo", connect_host: "node.example.com", connect_port: settings.listen_port, ingress_mode: "direct" as const, type, settings_json: JSON.stringify(settings) };
     const singBox = JSON.parse(singBoxSubscription(client, [node])) as {
-      dns: { servers: Array<{ type: string; tag: string; server: string }> };
+      dns: { servers: Array<Record<string, unknown>>; rules: Array<Record<string, unknown>> };
       inbounds: Array<{ type: string; address: string[]; auto_route: boolean; strict_route: boolean }>;
       outbounds: Array<{ type: string; tag: string; outbounds?: string[]; default?: string }>;
       route: { final: string; default_domain_resolver: string; auto_detect_interface: boolean; rules: Array<Record<string, unknown>> };
@@ -104,7 +104,9 @@ describe("subscriptions", () => {
     expect(singBox.dns.servers).toEqual([
       { type: "tls", tag: "proxy-dns", server: "8.8.8.8" },
       { type: "udp", tag: "local-dns", server: "223.5.5.5" },
+      { type: "fakeip", tag: "fakeip-dns", inet4_range: "198.18.0.0/15", inet6_range: "fc00::/18" },
     ]);
+    expect(singBox.dns.rules).toEqual([{ query_type: ["A", "AAAA"], action: "route", server: "fakeip-dns" }]);
     expect(singBox.route).toMatchObject({
       final: "节点选择",
       default_domain_resolver: "local-dns",
