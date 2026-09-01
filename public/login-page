@@ -10,7 +10,7 @@
   </head>
   <body class="login-page">
     <main class="login-card">
-      <span class="mark">NM</span>
+      <img class="mark" src="/favicon.svg" alt="NodeManage">
       <p class="eyebrow">CONTROL PLANE</p>
       <h1>登录</h1>
       <p>输入管理密码后进入节点控制面板。</p>

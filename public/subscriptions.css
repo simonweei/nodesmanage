@@ -66,3 +66,115 @@
   color: #ffb4bd;
   border: 1px solid #69343e;
 }
+
+.subscription-member {
+  margin-top: 22px;
+}
+
+.subscription-member > h3 {
+  margin-bottom: 10px;
+}
+
+.subscription-address-list {
+  display: grid;
+  gap: 8px;
+}
+
+.subscription-address {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #090d14;
+}
+
+.subscription-address-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.subscription-address-copy strong {
+  color: #dce5f3;
+  font-size: 13px;
+}
+
+.subscription-address-copy code {
+  overflow: hidden;
+  color: #8190a6;
+  font-size: 11px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subscription-address-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.subscription-icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  color: #b6c4d6;
+  background: #17202d;
+  border: 1px solid #30394b;
+}
+
+.subscription-icon-button svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.subscription-icon-button:hover,
+.subscription-icon-button.active {
+  color: var(--accent);
+  border-color: #3e8d70;
+  background: #10231d;
+}
+
+.subscription-qr-panel {
+  grid-column: 1 / -1;
+  padding: 14px 0 3px;
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
+.subscription-qr-panel[hidden] {
+  display: none;
+}
+
+.subscription-qr-image {
+  width: min(260px, 100%);
+  margin: 0 auto 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.subscription-qr-image svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.subscription-qr-panel p {
+  margin: 0;
+}
+
+@media (max-width: 520px) {
+  .subscription-address-copy code {
+    max-width: 52vw;
+  }
+}
