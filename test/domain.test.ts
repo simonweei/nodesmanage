@@ -91,10 +91,30 @@ describe("production Protocol Profiles", () => {
 describe("subscriptions", () => {
   it.each(cases)("generates sing-box, Mihomo and URI for %s", (type, settings, protocol) => {
     const node = { id: `node-${type}`, name: "Tokyo", connect_host: "node.example.com", connect_port: settings.listen_port, ingress_mode: "direct" as const, type, settings_json: JSON.stringify(settings) };
-    const singBox = JSON.parse(singBoxSubscription(client, [node])) as { outbounds: Array<{ type: string; tag: string; outbounds?: string[]; default?: string }>; route: { final: string } };
+    const singBox = JSON.parse(singBoxSubscription(client, [node])) as {
+      dns: { servers: Array<{ type: string; tag: string; server: string }> };
+      inbounds: Array<{ type: string; address: string[]; auto_route: boolean; strict_route: boolean }>;
+      outbounds: Array<{ type: string; tag: string; outbounds?: string[]; default?: string }>;
+      route: { final: string; default_domain_resolver: string; auto_detect_interface: boolean; rules: Array<Record<string, unknown>> };
+    };
     expect(singBox.outbounds[0]?.type).toBe(protocol);
     expect(singBox.outbounds[1]).toMatchObject({ type: "selector", tag: "节点选择", outbounds: [`Tokyo · ${type}`], default: `Tokyo · ${type}` });
-    expect(singBox.route.final).toBe("节点选择");
+    expect(singBox.outbounds[2]).toEqual({ type: "direct", tag: "direct" });
+    expect(singBox.inbounds).toEqual([{ type: "tun", tag: "tun-in", address: ["172.19.0.1/30", "fdfe:dcba:9876::1/126"], auto_route: true, strict_route: true }]);
+    expect(singBox.dns.servers).toEqual([
+      { type: "tls", tag: "proxy-dns", server: "8.8.8.8" },
+      { type: "udp", tag: "local-dns", server: "223.5.5.5" },
+    ]);
+    expect(singBox.route).toMatchObject({
+      final: "节点选择",
+      default_domain_resolver: "local-dns",
+      auto_detect_interface: true,
+      rules: [
+        { action: "sniff" },
+        { protocol: "dns", action: "hijack-dns" },
+        { ip_is_private: true, action: "route", outbound: "direct" },
+      ],
+    });
     expect(mihomoSubscription(client, [node])).toContain("proxies:");
     expect(uriSubscription(client, [node])).toContain(settings.server_address ?? "node.example.com");
   });
@@ -173,8 +193,9 @@ describe("multiple protocols on one VPS", () => {
     expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(8);
     const node = { id: "multi", name: "Tokyo", connect_host: "node.example.com", connect_port: 443, ingress_mode: "direct" as const, type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
     const singBoxOutbounds = JSON.parse(singBoxSubscription(client, [node])).outbounds as Array<{ type: string; outbounds?: string[] }>;
-    expect(singBoxOutbounds).toHaveLength(9);
+    expect(singBoxOutbounds).toHaveLength(10);
     expect(singBoxOutbounds[8]).toMatchObject({ type: "selector", outbounds: expect.arrayContaining(profiles.map(({ type }) => `Tokyo · ${type}`)) });
+    expect(singBoxOutbounds[9]).toEqual({ type: "direct", tag: "direct" });
     expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(8);
   });
 

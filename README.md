@@ -70,7 +70,7 @@ AGENT_TOKEN_SECRET="至少三十二位的独立随机值"
 2. 创建 VPS 时选择 Direct 或 Cloudflare Tunnel；部署策略默认使用“自动检测”，也可强制系统级或用户级，再复制一次性安装命令并在 15 分钟内执行。自动模式按命令的有效身份选择：root 使用系统级，普通用户使用用户级；低端口和 TLS/ACME 配置会要求系统级且不会静默提权。票据成功注册后立即失效，重新生成也会使旧票据失效。
    Bootstrap 只依赖基础 POSIX shell、`curl`/`wget`/BusyBox 之一以及任一常见 SHA-256 工具；它只下载并校验 Agent。
    Agent 根据系统环境安装固定版本的 sing-box 1.13.12；Tunnel 模式还会安装 cloudflared 2026.8.2。所有二进制均使用固定 SHA-256 摘要验证，并配置 systemd、OpenRC 或 standalone 进程管理。
-3. 在订阅列表创建订阅，从当前全部 VPS 中勾选一个或多个节点。新建 VPS 会自动出现在选择列表中且默认不勾选，删除 VPS 会自动清理其订阅绑定。客户端随订阅自动生成并拥有独立凭据和订阅 Token；创建、编辑、停用或删除会自动发布所有受影响 VPS。面板提供 Sing-box、Mihomo、Shadowsocks（SIP008）和通用 URI 四种订阅格式；Sing-box 二维码使用官方远程配置导入链接，可由 Android 客户端直接扫描，生成的“节点选择”分组可在图形客户端中切换节点。
+3. 在订阅列表创建订阅，从当前全部 VPS 中勾选一个或多个节点。新建 VPS 会自动出现在选择列表中且默认不勾选，删除 VPS 会自动清理其订阅绑定。客户端随订阅自动生成并拥有独立凭据和订阅 Token；创建、编辑、停用或删除会自动发布所有受影响 VPS。面板提供 Sing-box、Mihomo、Shadowsocks（SIP008）和通用 URI 四种订阅格式；Sing-box 二维码使用官方远程配置导入链接，可由 Android 客户端直接扫描。Sing-box 订阅包含 TUN、DNS 劫持、防回环路由、私网直连和“节点选择”分组，可在官方图形客户端中直接接管系统流量并切换节点。
 4. Agent 拉取修订后先执行 `sing-box check`，再通过 `/etc/nodemanage/releases` 下的 A/B 目录原子切换；重启失败时切回 `previous`。Tunnel 节点还必须通过公网 WebSocket Upgrade 探测，订阅只返回入口已验证、目标修订已应用、Agent 在线且 sing-box 正常运行的节点。
 
 VPS 列表集中显示 Agent/sing-box/配置版本、CPU/内存/运行时间、在线状态、配置同步状态和常用操作。订阅 Token 和链接只在创建响应中显示一次。

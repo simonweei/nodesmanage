@@ -51,8 +51,23 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
   if (!proxyOutbounds.length) return JSON.stringify({ outbounds: [] }, null, 2);
 
   const selectorTag = "节点选择";
+  const directTag = "direct";
+  const localDnsTag = "local-dns";
   const proxyTags = proxyOutbounds.map((outbound) => String(outbound.tag));
   return JSON.stringify({
+    dns: {
+      servers: [
+        { type: "tls", tag: "proxy-dns", server: "8.8.8.8" },
+        { type: "udp", tag: localDnsTag, server: "223.5.5.5" },
+      ],
+    },
+    inbounds: [{
+      type: "tun",
+      tag: "tun-in",
+      address: ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
+      auto_route: true,
+      strict_route: true,
+    }],
     outbounds: [
       ...proxyOutbounds,
       {
@@ -62,8 +77,18 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
         default: proxyTags[0],
         interrupt_exist_connections: true,
       },
+      { type: "direct", tag: directTag },
     ],
-    route: { final: selectorTag },
+    route: {
+      rules: [
+        { action: "sniff" },
+        { protocol: "dns", action: "hijack-dns" },
+        { ip_is_private: true, action: "route", outbound: directTag },
+      ],
+      final: selectorTag,
+      default_domain_resolver: localDnsTag,
+      auto_detect_interface: true,
+    },
   }, null, 2);
 }
 
