@@ -164,8 +164,12 @@ export function parseProfileSettings(type: ProfileType, input: unknown, ingressM
     const shortId = string(value.reality_short_id, "reality_short_id", 16).toLowerCase();
     if (!/^(?:[0-9a-f]{2}){1,8}$/.test(shortId)) throw new HttpError(400, "reality_short_id must be 2-16 hexadecimal characters with an even length");
     result.reality_short_id = shortId;
-    result.server_name = string(value.server_name, "server_name", 253);
-    result.reality_handshake_server = string(value.reality_handshake_server, "reality_handshake_server", 253);
+    const realityServerName = hostname(value.reality_handshake_server, "reality_handshake_server");
+    // sing-box Reality authenticates the ClientHello against this exact name.
+    // Keeping a second editable SNI allows configurations that always fail with
+    // `REALITY: processed invalid connection`, so use one source of truth.
+    result.server_name = realityServerName;
+    result.reality_handshake_server = realityServerName;
     result.reality_handshake_port = port(value.reality_handshake_port, "reality_handshake_port");
     return result;
   }
@@ -211,7 +215,7 @@ export async function profileDefaults(type: ProfileType, deploymentMode: "system
   if (type === "vless-reality-vision") {
     const keys = await realityKeypair();
     return {
-      listen_port: deploymentMode === "user" ? 8443 : 443, server_name: "www.microsoft.com", reality_handshake_server: "www.microsoft.com",
+      listen_port: deploymentMode === "user" ? 8443 : 443, server_name: "www.cloudflare.com", reality_handshake_server: "www.cloudflare.com",
       reality_handshake_port: 443, reality_private_key: keys.private_key, reality_public_key: keys.public_key,
       reality_short_id: Array.from(crypto.getRandomValues(new Uint8Array(8)), (x) => x.toString(16).padStart(2, "0")).join(""),
     };

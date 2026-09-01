@@ -59,6 +59,16 @@ describe("production Protocol Profiles", () => {
     expect(() => parseProfileSettings("vless-tls-websocket", { ...cases[2][1], tls_server_name: "https://bad.example.net" })).toThrow("domain name");
     expect(() => parseProfileSettings("vless-tls-websocket", { ...cases[2][1], websocket_path: "missing-slash" })).toThrow("start with /");
   });
+
+  it("uses one Reality target as both handshake host and SNI", () => {
+    const parsed = parseProfileSettings("vless-reality-vision", {
+      ...cases[0][1],
+      server_name: "mismatched.example.com",
+      reality_handshake_server: "www.cloudflare.com",
+    });
+    expect(parsed.server_name).toBe("www.cloudflare.com");
+    expect(parsed.reality_handshake_server).toBe("www.cloudflare.com");
+  });
 });
 
 describe("subscriptions", () => {
