@@ -112,7 +112,7 @@ Named Tunnel 的“公网域名”必须填写 Cloudflare Zero Trust 中该 Tunn
 
 Shadowsocks 固定使用 `2022-blake3-aes-128-gcm` 多用户模式。Direct TLS 证书由 Agent 0.10.0 的统一证书管理器通过 Let's Encrypt HTTP-01 申请和续期，因此域名必须先解析到 VPS，TCP 80 必须可从公网访问。多个 TLS 协议可以同时启用：相同域名和 ACME 邮箱只签发一张证书并共享文件，不同域名分别管理；证书通过版本目录和 `current` 原子软链切换，续期失败会继续使用仍有效的旧证书并指数退避重试。用户级部署仍只允许 Reality 和 Shadowsocks，因为 HTTP-01 需要系统级监听和稳定的 `/etc/nodemanage/certificates` 状态目录。Cloudflare Tunnel 由边缘终止 TLS，不在 VPS 申请证书。
 
-“订阅连接域名”允许与 Agent 上报地址分离：WebSocket/gRPC 可填写 Cloudflare 代理域名，Reality、Trojan、Hysteria2 和 TUIC 通常填写直连域名。TCP 与 UDP 协议可以复用相同端口，同一传输层的协议不能占用同一端口。
+“订阅连接域名”允许与 Agent 上报地址分离：WebSocket/gRPC 可填写 Cloudflare 代理域名，Reality、Trojan、Hysteria2 和 TUIC 通常填写直连域名。Direct 的 TCP 协议默认分别使用 Cloudflare 常见 HTTPS 端口：VLESS Reality 8443、Shadowsocks 2053、VLESS WebSocket 443、VLESS gRPC 2083、Trojan TLS 2087、Trojan WebSocket 2096；Hysteria2 和 TUIC 默认分别使用 UDP 9443 和 10443。所有协议默认端口互不重复，用户仍可手动修改；同一传输层的协议不能占用同一端口。
 
 ## Agent 上报的权限
 

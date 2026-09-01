@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
-import { certificateRequirements, compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
+import { certificateRequirements, compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, profileDefaults, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
 import { readJsonObject } from "../src/http";
 import { realityKeypair } from "../src/crypto";
 import { mihomoSubscription, singBoxSubscription, uriSubscription, v2rayNSubscription } from "../src/subscriptions";
@@ -24,6 +24,23 @@ const cases: [ProfileType, ProfileSettings, string][] = [
 ];
 
 describe("production Protocol Profiles", () => {
+  it("uses distinct Direct defaults and Cloudflare HTTPS ports for TCP protocols", async () => {
+    const types = cases.map(([type]) => type);
+    const defaults = await Promise.all(types.map(async (type) => [type, await profileDefaults(type, "system", "direct")] as const));
+    const ports = Object.fromEntries(defaults.map(([type, settings]) => [type, settings.listen_port]));
+    expect(ports).toEqual({
+      "vless-reality-vision": 8443,
+      "shadowsocks-aead": 2053,
+      "vless-tls-websocket": 443,
+      "vless-tls-grpc": 2083,
+      hysteria2: 9443,
+      tuic: 10443,
+      "trojan-tls": 2087,
+      "trojan-tls-websocket": 2096,
+    });
+    expect(new Set(Object.values(ports)).size).toBe(types.length);
+  });
+
   it("generates a Reality public key that matches its private key", async () => {
     const pair = await realityKeypair();
     const privateKey = decodeBase64Url(pair.private_key);

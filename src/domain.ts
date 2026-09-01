@@ -215,19 +215,20 @@ export async function profileDefaults(type: ProfileType, deploymentMode: "system
   if (type === "vless-reality-vision") {
     const keys = await realityKeypair();
     return {
-      listen_port: deploymentMode === "user" ? 8443 : 443, server_name: "www.cloudflare.com", reality_handshake_server: "www.cloudflare.com",
+      listen_port: 8443, server_name: "www.cloudflare.com", reality_handshake_server: "www.cloudflare.com",
       reality_handshake_port: 443, reality_private_key: keys.private_key, reality_public_key: keys.public_key,
       reality_short_id: Array.from(crypto.getRandomValues(new Uint8Array(8)), (x) => x.toString(16).padStart(2, "0")).join(""),
     };
   }
-  if (type === "shadowsocks-aead") return { listen_port: 8388, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: randomBase64(16) };
+  if (type === "shadowsocks-aead") return { listen_port: 2053, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: randomBase64(16) };
   if (isAcmeProfile(type)) {
     const common = { server_address: "", tls_server_name: "", acme_email: "" };
-    if (type === "vless-tls-websocket" || type === "trojan-tls-websocket") return { listen_port: 8443, ...common, websocket_path: "/proxy", websocket_host: common.tls_server_name };
-    if (type === "vless-tls-grpc") return { listen_port: 443, ...common, grpc_service_name: "NodeManage" };
-    if (type === "hysteria2") return { listen_port: 8443, ...common, hysteria2_obfs_password: randomBase64(24) };
+    if (type === "vless-tls-websocket") return { listen_port: 443, ...common, websocket_path: "/proxy", websocket_host: common.tls_server_name };
+    if (type === "vless-tls-grpc") return { listen_port: 2083, ...common, grpc_service_name: "NodeManage" };
+    if (type === "hysteria2") return { listen_port: 9443, ...common, hysteria2_obfs_password: randomBase64(24) };
     if (type === "tuic") return { listen_port: 10443, ...common };
-    return { listen_port: 9443, ...common };
+    if (type === "trojan-tls") return { listen_port: 2087, ...common };
+    return { listen_port: 2096, ...common, websocket_path: "/proxy", websocket_host: common.tls_server_name };
   }
   throw new HttpError(400, "unsupported profile type");
 }
