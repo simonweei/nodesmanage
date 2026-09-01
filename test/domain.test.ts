@@ -43,7 +43,7 @@ describe("production Protocol Profiles", () => {
     expect(ss).not.toHaveProperty("network");
     expect(ss).toMatchObject({ multiplex: { enabled: true } });
     const tuic = (compileServerConfig("tuic", cases[5][1], [client]).inbounds as Record<string, unknown>[])[0];
-    expect(tuic).toMatchObject({ congestion_control: "bbr", zero_rtt_handshake: false });
+    expect(tuic).toMatchObject({ congestion_control: "bbr", zero_rtt_handshake: false, tls: { alpn: ["h3"] } });
     const grpc = (compileServerConfig("vless-tls-grpc", cases[3][1], [client]).inbounds as Record<string, unknown>[])[0];
     expect(grpc).toMatchObject({ tls: {
       alpn: ["h2"],
@@ -85,6 +85,20 @@ describe("subscriptions", () => {
       const outbound = JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { tls: Record<string, unknown> };
       expect(outbound.tls).not.toHaveProperty("utls");
     }
+  });
+
+  it("emits cross-core TUIC compatibility parameters", () => {
+    const node = { id: "node-tuic", name: "Tokyo", connect_host: "tuic.example.net", connect_port: 10443, ingress_mode: "direct" as const, type: "tuic" as const, settings_json: JSON.stringify(cases[5][1]) };
+    const outbound = JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { heartbeat: string; tls: { alpn: string[] } };
+    expect(outbound).toMatchObject({ heartbeat: "10s", tls: { alpn: ["h3"] } });
+    const mihomo = mihomoSubscription(client, [node]);
+    expect(mihomo).toContain("    alpn:\n      - h3");
+    expect(mihomo).toContain("    heartbeat-interval: 10000");
+    expect(mihomo).toContain("    request-timeout: 8000");
+    expect(mihomo).toContain("    reduce-rtt: false");
+    const uri = uriSubscription(client, [node]);
+    expect(uri).toContain("alpn=h3");
+    expect(uri).toContain("zero_rtt_handshake=0");
   });
 
   it("derives the Reality subscription public key from the server private key", async () => {

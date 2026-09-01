@@ -263,7 +263,7 @@ export function compileServerConfig(type: ProfileType, settings: ProfileSettings
       inbound = { ...base, type: "hysteria2", users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), obfs: { type: "salamander", password: settings.hysteria2_obfs_password }, tls: managedTls(settings) };
       break;
     case "tuic":
-      inbound = { ...base, type: "tuic", users: clients.map((c) => ({ name: c.name, uuid: c.uuid, password: c.shadowsocks_password })), congestion_control: "bbr", zero_rtt_handshake: false, tls: managedTls(settings) };
+      inbound = { ...base, type: "tuic", users: clients.map((c) => ({ name: c.name, uuid: c.uuid, password: c.shadowsocks_password })), congestion_control: "bbr", zero_rtt_handshake: false, tls: managedTls(settings, ["h3"]) };
       break;
     case "trojan-tls":
       inbound = { ...base, type: "trojan", users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), tls: managedTls(settings), multiplex: { enabled: true } };
