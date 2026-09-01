@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version          = "0.10.0"
+	version          = "0.11.0"
 	maxResponseBytes = 3 << 20
 )
 
@@ -113,9 +113,16 @@ type cpuSample struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal("usage: nodemanage-agent <install|repair|upgrade|diagnose|uninstall|run|once|version>")
+		fmt.Print(commandHelp(""))
+		return
 	}
 	switch os.Args[1] {
+	case "help", "-h", "--help":
+		command := ""
+		if len(os.Args) > 2 {
+			command = os.Args[2]
+		}
+		fmt.Print(commandHelp(command))
 	case "install":
 		installCommand(os.Args[2:])
 	case "repair":
@@ -123,7 +130,11 @@ func main() {
 	case "upgrade":
 		upgradeCommand(os.Args[2:])
 	case "diagnose":
-		diagnoseCommand()
+		diagnoseCommand(os.Args[2:])
+	case "status":
+		statusCommand(os.Args[2:])
+	case "logs":
+		logsCommand(os.Args[2:])
 	case "uninstall":
 		uninstallCommand(os.Args[2:])
 	case "run":
@@ -133,7 +144,7 @@ func main() {
 	case "version":
 		fmt.Println(version)
 	default:
-		fatal("unknown command: " + os.Args[1])
+		fatal("unknown command: " + os.Args[1] + "\nRun 'nodemanage-agent help' for usage.")
 	}
 }
 

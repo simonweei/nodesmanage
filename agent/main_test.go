@@ -310,3 +310,46 @@ func TestPostJSON(t *testing.T) {
 		t.Fatal("response was not decoded")
 	}
 }
+
+func TestCommandHelpDocumentsSupportCommands(t *testing.T) {
+	general := commandHelp("")
+	for _, command := range []string{"help", "status", "logs", "diagnose"} {
+		if !strings.Contains(general, command) {
+			t.Fatalf("general help does not contain %q", command)
+		}
+	}
+	if detail := commandHelp("logs"); !strings.Contains(detail, "--component") || !strings.Contains(detail, "--tail") {
+		t.Fatalf("unexpected logs help: %s", detail)
+	}
+	if detail := commandHelp("help"); !strings.Contains(detail, "help [command]") {
+		t.Fatalf("unexpected help help: %s", detail)
+	}
+}
+
+func TestReadLogTailIsBoundedByLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.log")
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\nfour\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readLogTail(path, 2, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "three\nfour\n" {
+		t.Fatalf("tail = %q", got)
+	}
+}
+
+func TestReadLogTailWithoutTrailingNewline(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.log")
+	if err := os.WriteFile(path, []byte("one\ntwo\nthree\nfour"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readLogTail(path, 2, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "three\nfour" {
+		t.Fatalf("tail = %q", got)
+	}
+}

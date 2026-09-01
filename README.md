@@ -91,7 +91,7 @@ curl -fsSL https://管理域名/install.sh | sh -s -- --ticket 一次性票据 -
 
 常规用户级部署使用 systemd 用户管理器。若 VPS 没有持续登录会话，管理员需执行 `loginctl enable-linger 用户名`；这一步属于系统策略，Agent 不会自行提权修改。无 systemd/OpenRC 时会自动回退 standalone，OpenRC 当前仅支持系统级部署。
 
-当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.10.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
+当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.11.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
 
 Tunnel 模式只提供 Cloudflare Public Hostname 能直接承载的 VLESS/Trojan + TLS + WebSocket 组合：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 固定公网端口 443 且只能启用一个协议，会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，可同时启用两个协议，每个协议分别使用 443、2053、2083、2087、2096 或 8443 中不重复的公网端口、本地端口和 WebSocket 路径。Agent 在 `127.0.0.1` 提供轻量路径路由，再转发到各 sing-box 入站。Named Tunnel 安装命令需填写已配置路由的域名和 Tunnel Token；Token 不写入 D1，只保存在 VPS 的 `0600` Agent 配置中。
 
@@ -110,7 +110,7 @@ Named Tunnel 的“公网域名”必须填写 Cloudflare Zero Trust 中该 Tunn
 | Trojan TLS | TCP | system/root | ACME 域名，建议 DNS only 直连 VPS |
 | Trojan TLS + WebSocket | TCP | system/root | ACME 域名；Tunnel 模式由 Cloudflare 边缘终止 TLS |
 
-Shadowsocks 固定使用 `2022-blake3-aes-128-gcm` 多用户模式。Direct TLS 证书由 Agent 0.10.0 的统一证书管理器通过 Let's Encrypt HTTP-01 申请和续期，因此域名必须先解析到 VPS，TCP 80 必须可从公网访问。多个 TLS 协议可以同时启用：相同域名和 ACME 邮箱只签发一张证书并共享文件，不同域名分别管理；证书通过版本目录和 `current` 原子软链切换，续期失败会继续使用仍有效的旧证书并指数退避重试。用户级部署仍只允许 Reality 和 Shadowsocks，因为 HTTP-01 需要系统级监听和稳定的 `/etc/nodemanage/certificates` 状态目录。Cloudflare Tunnel 由边缘终止 TLS，不在 VPS 申请证书。
+Shadowsocks 固定使用 `2022-blake3-aes-128-gcm` 多用户模式。Direct TLS 证书由 Agent 0.11.0 的统一证书管理器通过 Let's Encrypt HTTP-01 申请和续期，因此域名必须先解析到 VPS，TCP 80 必须可从公网访问。多个 TLS 协议可以同时启用：相同域名和 ACME 邮箱只签发一张证书并共享文件，不同域名分别管理；证书通过版本目录和 `current` 原子软链切换，续期失败会继续使用仍有效的旧证书并指数退避重试。用户级部署仍只允许 Reality 和 Shadowsocks，因为 HTTP-01 需要系统级监听和稳定的 `/etc/nodemanage/certificates` 状态目录。Cloudflare Tunnel 由边缘终止 TLS，不在 VPS 申请证书。
 
 “订阅连接域名”允许与 Agent 上报地址分离：WebSocket/gRPC 可填写 Cloudflare 代理域名，Reality、Trojan、Hysteria2 和 TUIC 通常填写直连域名。Direct 的 TCP 协议默认分别使用 Cloudflare 常见 HTTPS 端口：VLESS Reality 8443、Shadowsocks 2053、VLESS WebSocket 443、VLESS gRPC 2083、Trojan TLS 2087、Trojan WebSocket 2096；Hysteria2 和 TUIC 默认分别使用 UDP 9443 和 10443。所有协议默认端口互不重复，用户仍可手动修改；同一传输层的协议不能占用同一端口。
 
@@ -129,6 +129,10 @@ Agent 不提权、不执行管理端传来的命令，也不会为了检测权�
 VPS 上可使用：
 
 - `nodemanage-agent diagnose`：输出平台和服务诊断。
+- `nodemanage-agent diagnose --full`：增加版本、权限、配置校验和当前配置版本，输出自动避开 Token。
+- `nodemanage-agent status`：输出 Agent、sing-box、Tunnel、入口和当前配置状态。
+- `nodemanage-agent logs --component agent --tail 200`：按组件读取最近日志，不上传到管理端。
+- `nodemanage-agent help [command]`：显示全部命令或单个命令的参数说明。
 - `nodemanage-agent repair`：按固定 Manifest 重新下载损坏或缺失的二进制，修复配置、权限和服务。
 - `nodemanage-agent upgrade`：升级 Agent/sing-box，版本或服务健康检查失败时恢复旧二进制。
 - `nodemanage-agent uninstall`：自动按当前执行用户卸载对应模式；`--purge` 同时删除配置。也可显式指定 `--mode system|user`。

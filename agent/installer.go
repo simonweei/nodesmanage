@@ -543,20 +543,6 @@ func rollbackExecutables(layout installLayout, agentChanged, runtimeChanged bool
 	}
 }
 
-func diagnoseCommand() {
-	platform := detectPlatform()
-	layout := defaultLayout()
-	platform.InstallMode = layout.Mode
-	result := map[string]any{"platform": platform, "is_root": os.Geteuid() == 0,
-		"agent_installed": commandOK(layout.AgentPath, "version"), "sing_box_installed": commandOK(layout.SingBoxPath, "version"),
-		"cloudflared_installed": commandOK(layout.CloudflaredPath, "version"),
-		"agent_config":          fileExists(layout.AgentConfig), "runtime_config": fileExists(layout.RuntimeConfig),
-		"agent_running": serviceActive(platform.InitSystem, layout.Mode, "nodemanage-agent"), "sing_box_running": serviceActive(platform.InitSystem, layout.Mode, "sing-box"),
-		"paths": map[string]string{"agent": layout.AgentPath, "sing_box": layout.SingBoxPath, "cloudflared": layout.CloudflaredPath, "config": layout.AgentConfig, "runtime": layout.RuntimeConfig, "state": layout.StateRoot}}
-	data, _ := json.MarshalIndent(result, "", "  ")
-	fmt.Println(string(data))
-}
-
 func uninstallCommand(args []string) {
 	flags := flag.NewFlagSet("uninstall", flag.ExitOnError)
 	purge := flags.Bool("purge", false, "also delete configurations")
