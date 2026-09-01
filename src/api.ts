@@ -2,7 +2,7 @@ import { requireAdmin, requireAgent } from "./auth";
 import { hmacHex, randomBase64, randomToken, randomUuid, sha256Hex } from "./crypto";
 import { certificateRequirements, compileServerProfiles, ingressCapabilities, isAcmeProfile, isTunnelProfile, parseProfileSettings, parseProfileType, profileDefaults, profileNetworks, tunnelEdgePort, type CertificateRequirement, type ClientRecord, type IngressMode, type NodeRecord, type ProfileType, type ProtocolProfile, type TunnelKind } from "./domain";
 import { booleanField, HttpError, json, numberField, readJsonObject, stringField } from "./http";
-import { mihomoSubscription, singBoxSubscription, v2rayNSubscription } from "./subscriptions";
+import { mihomoSubscription, shadowsocksSubscription, singBoxSubscription, v2rayNSubscription } from "./subscriptions";
 
 interface ProfileRow {
   id: string;
@@ -797,7 +797,7 @@ async function agentResult(request: Request, env: Env): Promise<Response> {
 }
 
 async function subscription(path: string, env: Env): Promise<Response> {
-  const match = /^\/sub\/([a-f0-9]{64})\/(sing-box|mihomo|uri)$/.exec(path);
+  const match = /^\/sub\/([a-f0-9]{64})\/(sing-box|mihomo|shadowsocks|uri)$/.exec(path);
   if (!match) throw new HttpError(404, "subscription not found");
   const tokenHash = await sha256Hex(match[1] ?? "");
   const subscriptionRow = await env.DB.prepare(`SELECT s.group_id,g.name AS group_name,c.id,c.name,c.uuid,c.shadowsocks_password FROM subscriptions s JOIN clients c ON c.id=s.client_id
@@ -811,8 +811,13 @@ async function subscription(path: string, env: Env): Promise<Response> {
     AND a.current_revision IS NOT NULL AND a.current_revision=a.desired_revision
     AND a.singbox_running=1 AND a.last_seen>datetime('now','-5 minutes') ORDER BY n.created_at`).bind(subscriptionRow.group_id).all<NodeRecord>();
   const format = match[2];
-  const output = format === "sing-box" ? singBoxSubscription(client, nodes.results) : format === "mihomo" ? mihomoSubscription(client, nodes.results) : v2rayNSubscription(client, nodes.results);
-  const contentType = format === "mihomo" ? "text/yaml; charset=utf-8" : format === "sing-box" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8";
+  const output = format === "sing-box" ? singBoxSubscription(client, nodes.results)
+    : format === "mihomo" ? mihomoSubscription(client, nodes.results)
+    : format === "shadowsocks" ? shadowsocksSubscription(client, nodes.results)
+    : v2rayNSubscription(client, nodes.results);
+  const contentType = format === "mihomo" ? "text/yaml; charset=utf-8"
+    : format === "sing-box" || format === "shadowsocks" ? "application/json; charset=utf-8"
+    : "text/plain; charset=utf-8";
   const title = String(subscriptionRow.group_name);
   return new Response(output, { headers: { "content-type": contentType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(title)}`, "cache-control": "private, max-age=60", "subscription-userinfo": "upload=0; download=0; total=0; expire=0" } });
 }

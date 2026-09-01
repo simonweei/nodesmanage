@@ -50,6 +50,20 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
   return JSON.stringify({ outbounds: expand(records).map((node) => singOutbound(client, node)) }, null, 2);
 }
 
+export function shadowsocksSubscription(client: ClientRecord, records: NodeRecord[]): string {
+  const servers = expand(records)
+    .filter((node) => node.type === "shadowsocks-aead")
+    .map((node) => ({
+      id: node.id,
+      remarks: tag(node),
+      server: address(node),
+      server_port: node.settings.listen_port,
+      password: `${node.settings.shadowsocks_server_password}:${client.shadowsocks_password}`,
+      method: node.settings.shadowsocks_method,
+    }));
+  return JSON.stringify({ version: 1, servers }, null, 2);
+}
+
 function mihomoProxy(client: ClientRecord, node: ExpandedNode): string[] {
   const s = node.settings;
   const lines = [`  - name: ${yaml(tag(node))}`, `    server: ${yaml(address(node))}`, `    port: ${s.listen_port}`];

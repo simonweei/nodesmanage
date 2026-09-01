@@ -252,6 +252,11 @@ describe("control-plane production flow", () => {
     expect(config.outbounds).toHaveLength(1);
     expect(config.outbounds[0]?.server).toBe("node.example.com");
 
+    const shadowsocks = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/shadowsocks`, { headers: { "cf-connecting-ip": "198.51.100.4" } });
+    expect(shadowsocks.status).toBe(200);
+    expect(shadowsocks.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(await shadowsocks.json()).toEqual({ version: 1, servers: [] });
+
     expect((await jsonRequest(`/api/admin/vps/${pendingVpsId}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
     expect(await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM subscription_group_nodes WHERE group_id=? AND node_id=?").bind(groupValue.id, pendingVpsId).first()).toMatchObject({ count: 0 });
   });

@@ -3,7 +3,7 @@ import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
 import { certificateRequirements, compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, profileDefaults, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
 import { readJsonObject } from "../src/http";
 import { realityKeypair } from "../src/crypto";
-import { mihomoSubscription, singBoxSubscription, uriSubscription, v2rayNSubscription } from "../src/subscriptions";
+import { mihomoSubscription, shadowsocksSubscription, singBoxSubscription, uriSubscription, v2rayNSubscription } from "../src/subscriptions";
 import { x25519 } from "@noble/curves/ed25519.js";
 
 const decodeBase64Url = (value: string): Uint8Array => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - value.length % 4) % 4)), (char) => char.charCodeAt(0));
@@ -141,6 +141,22 @@ describe("subscriptions", () => {
     expect(decoded.trim().split("\n")).toHaveLength(2);
     expect(decoded).toContain("Tokyo");
     expect(decoded).toContain("Osaka");
+  });
+
+  it("emits a SIP008 Shadowsocks subscription containing only Shadowsocks nodes", () => {
+    const shadowsocksNode = { id: "11111111-2222-4333-8444-555555555555", name: "Tokyo", connect_host: "ss.example.com", connect_port: 8388, ingress_mode: "direct" as const, type: "shadowsocks-aead" as const, settings_json: JSON.stringify(cases[1][1]) };
+    const vlessNode = { id: "66666666-7777-4888-8999-000000000000", name: "Osaka", connect_host: "vless.example.com", connect_port: 443, ingress_mode: "direct" as const, type: "vless-reality-vision" as const, settings_json: JSON.stringify(cases[0][1]) };
+    expect(JSON.parse(shadowsocksSubscription(client, [shadowsocksNode, vlessNode]))).toEqual({
+      version: 1,
+      servers: [{
+        id: shadowsocksNode.id,
+        remarks: "Tokyo · shadowsocks-aead",
+        server: "ss.example.com",
+        server_port: 8388,
+        password: `${cases[1][1].shadowsocks_server_password}:${client.shadowsocks_password}`,
+        method: cases[1][1].shadowsocks_method,
+      }],
+    });
   });
 });
 
