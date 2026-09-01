@@ -47,7 +47,24 @@ function singOutbound(client: ClientRecord, node: ExpandedNode): Record<string, 
 }
 
 export function singBoxSubscription(client: ClientRecord, records: NodeRecord[]): string {
-  return JSON.stringify({ outbounds: expand(records).map((node) => singOutbound(client, node)) }, null, 2);
+  const proxyOutbounds = expand(records).map((node) => singOutbound(client, node));
+  if (!proxyOutbounds.length) return JSON.stringify({ outbounds: [] }, null, 2);
+
+  const selectorTag = "节点选择";
+  const proxyTags = proxyOutbounds.map((outbound) => String(outbound.tag));
+  return JSON.stringify({
+    outbounds: [
+      ...proxyOutbounds,
+      {
+        type: "selector",
+        tag: selectorTag,
+        outbounds: proxyTags,
+        default: proxyTags[0],
+        interrupt_exist_connections: true,
+      },
+    ],
+    route: { final: selectorTag },
+  }, null, 2);
 }
 
 export function shadowsocksSubscription(client: ClientRecord, records: NodeRecord[]): string {

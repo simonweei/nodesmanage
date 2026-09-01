@@ -248,9 +248,11 @@ describe("control-plane production flow", () => {
 
     const active = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.4" } });
     expect(active.status).toBe(200);
-    const config = await active.json<{ outbounds: Array<{ server: string }> }>();
-    expect(config.outbounds).toHaveLength(1);
+    const config = await active.json<{ outbounds: Array<{ type: string; tag: string; server?: string; outbounds?: string[] }>; route: { final: string } }>();
+    expect(config.outbounds).toHaveLength(2);
     expect(config.outbounds[0]?.server).toBe("node.example.com");
+    expect(config.outbounds[1]).toMatchObject({ type: "selector", tag: "节点选择", outbounds: ["Tokyo 1 · vless-reality-vision"] });
+    expect(config.route.final).toBe("节点选择");
 
     const shadowsocks = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/shadowsocks`, { headers: { "cf-connecting-ip": "198.51.100.4" } });
     expect(shadowsocks.status).toBe(200);

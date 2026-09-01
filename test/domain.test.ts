@@ -91,9 +91,16 @@ describe("production Protocol Profiles", () => {
 describe("subscriptions", () => {
   it.each(cases)("generates sing-box, Mihomo and URI for %s", (type, settings, protocol) => {
     const node = { id: `node-${type}`, name: "Tokyo", connect_host: "node.example.com", connect_port: settings.listen_port, ingress_mode: "direct" as const, type, settings_json: JSON.stringify(settings) };
-    expect((JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { type: string }).type).toBe(protocol);
+    const singBox = JSON.parse(singBoxSubscription(client, [node])) as { outbounds: Array<{ type: string; tag: string; outbounds?: string[]; default?: string }>; route: { final: string } };
+    expect(singBox.outbounds[0]?.type).toBe(protocol);
+    expect(singBox.outbounds[1]).toMatchObject({ type: "selector", tag: "节点选择", outbounds: [`Tokyo · ${type}`], default: `Tokyo · ${type}` });
+    expect(singBox.route.final).toBe("节点选择");
     expect(mihomoSubscription(client, [node])).toContain("proxies:");
     expect(uriSubscription(client, [node])).toContain(settings.server_address ?? "node.example.com");
+  });
+
+  it("keeps an empty sing-box subscription valid when no healthy nodes are available", () => {
+    expect(JSON.parse(singBoxSubscription(client, []))).toEqual({ outbounds: [] });
   });
 
   it("does not enable unsupported uTLS for QUIC outbounds", () => {
@@ -165,7 +172,9 @@ describe("multiple protocols on one VPS", () => {
     const profiles = cases.map(([type, settings]) => ({ type, settings }));
     expect((compileServerProfiles(profiles, [client]).inbounds as unknown[])).toHaveLength(8);
     const node = { id: "multi", name: "Tokyo", connect_host: "node.example.com", connect_port: 443, ingress_mode: "direct" as const, type: profiles[0].type, settings_json: JSON.stringify(profiles[0].settings), protocols_json: JSON.stringify(profiles) };
-    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds).toHaveLength(8);
+    const singBoxOutbounds = JSON.parse(singBoxSubscription(client, [node])).outbounds as Array<{ type: string; outbounds?: string[] }>;
+    expect(singBoxOutbounds).toHaveLength(9);
+    expect(singBoxOutbounds[8]).toMatchObject({ type: "selector", outbounds: expect.arrayContaining(profiles.map(({ type }) => `Tokyo · ${type}`)) });
     expect(uriSubscription(client, [node]).trim().split("\n")).toHaveLength(8);
   });
 
