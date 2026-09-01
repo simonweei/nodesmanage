@@ -1,4 +1,4 @@
-import { randomBase64, realityKeypair } from "./crypto";
+import { randomBase64, realityKeypair, realityPrivateKey } from "./crypto";
 import { HttpError } from "./http";
 
 export const PROFILE_TYPES = [
@@ -244,7 +244,7 @@ export function compileServerConfig(type: ProfileType, settings: ProfileSettings
   const base = { tag: `${type}-in`, listen: ingressMode === "cloudflare_tunnel" ? "127.0.0.1" : "::", listen_port: settings.listen_port };
   switch (type) {
     case "vless-reality-vision":
-      inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid, flow: "xtls-rprx-vision" })), tls: { enabled: true, server_name: settings.server_name, reality: { enabled: true, handshake: { server: settings.reality_handshake_server, server_port: settings.reality_handshake_port }, private_key: settings.reality_private_key, short_id: [settings.reality_short_id] } } };
+      inbound = { ...base, type: "vless", users: clients.map((c) => ({ name: c.name, uuid: c.uuid, flow: "xtls-rprx-vision" })), tls: { enabled: true, server_name: settings.server_name, reality: { enabled: true, handshake: { server: settings.reality_handshake_server, server_port: settings.reality_handshake_port }, private_key: realityPrivateKey(settings.reality_private_key!), short_id: [settings.reality_short_id] } } };
       break;
     case "shadowsocks-aead":
       inbound = { ...base, type: "shadowsocks", method: settings.shadowsocks_method, password: settings.shadowsocks_server_password, users: clients.map((c) => ({ name: c.name, password: c.shadowsocks_password })), multiplex: { enabled: true } };

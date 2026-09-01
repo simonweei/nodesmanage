@@ -14,6 +14,14 @@ function decodeBase64Url(value: string): Uint8Array {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+function clampX25519PrivateKey(value: Uint8Array): Uint8Array {
+  if (value.length !== 32) throw new Error("Reality private key must contain 32 bytes");
+  const result = value.slice();
+  result[0] = result[0]! & 248;
+  result[31] = (result[31]! & 127) | 64;
+  return result;
+}
+
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -45,12 +53,15 @@ export function randomBase64(bytes: number): string {
 }
 
 export async function realityKeypair(): Promise<{ private_key: string; public_key: string }> {
-  const privateKey = crypto.getRandomValues(new Uint8Array(32));
+  const privateKey = clampX25519PrivateKey(crypto.getRandomValues(new Uint8Array(32)));
   return { private_key: base64Url(privateKey), public_key: base64Url(x25519.getPublicKey(privateKey)) };
 }
 
+export function realityPrivateKey(privateKey: string): string {
+  return base64Url(clampX25519PrivateKey(decodeBase64Url(privateKey)));
+}
+
 export function realityPublicKey(privateKey: string): string {
-  const decoded = decodeBase64Url(privateKey);
-  if (decoded.length !== 32) throw new Error("Reality private key must contain 32 bytes");
+  const decoded = clampX25519PrivateKey(decodeBase64Url(privateKey));
   return base64Url(x25519.getPublicKey(decoded));
 }

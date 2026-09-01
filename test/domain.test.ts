@@ -13,7 +13,7 @@ const client = {
   shadowsocks_password: "YWJjZGVmMDEyMzQ1Njc4OQ==",
 };
 const cases: [ProfileType, ProfileSettings, string][] = [
-  ["vless-reality-vision", { listen_port: 443, server_name: "www.microsoft.com", reality_private_key: "private", reality_public_key: "public", reality_short_id: "0123456789abcdef", reality_handshake_server: "www.microsoft.com", reality_handshake_port: 443 }, "vless"],
+  ["vless-reality-vision", { listen_port: 443, server_name: "www.microsoft.com", reality_private_key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", reality_public_key: "public", reality_short_id: "0123456789abcdef", reality_handshake_server: "www.microsoft.com", reality_handshake_port: 443 }, "vless"],
   ["shadowsocks-aead", { listen_port: 8388, shadowsocks_method: "2022-blake3-aes-128-gcm", shadowsocks_server_password: "MDEyMzQ1Njc4OWFiY2RlZg==" }, "shadowsocks"],
   ["vless-tls-websocket", { listen_port: 8443, server_address: "ws.example.net", tls_server_name: "ws.example.net", acme_email: "ops@example.net", websocket_path: "/proxy", websocket_host: "ws.example.net" }, "vless"],
   ["vless-tls-grpc", { listen_port: 443, server_address: "grpc.example.net", tls_server_name: "grpc.example.net", acme_email: "ops@example.net", grpc_service_name: "NodeManage" }, "vless"],
@@ -26,7 +26,10 @@ const cases: [ProfileType, ProfileSettings, string][] = [
 describe("production Protocol Profiles", () => {
   it("generates a Reality public key that matches its private key", async () => {
     const pair = await realityKeypair();
-    expect(decodeBase64Url(pair.public_key)).toEqual(x25519.getPublicKey(decodeBase64Url(pair.private_key)));
+    const privateKey = decodeBase64Url(pair.private_key);
+    expect(privateKey[0]! & 7).toBe(0);
+    expect(privateKey[31]! & 0xc0).toBe(0x40);
+    expect(decodeBase64Url(pair.public_key)).toEqual(x25519.getPublicKey(privateKey));
   });
 
   it.each(cases)("parses and compiles %s", (type, settings, inboundType) => {
