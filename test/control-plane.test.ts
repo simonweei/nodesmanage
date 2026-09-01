@@ -261,6 +261,10 @@ describe("control-plane production flow", () => {
     await worker.scheduled(createScheduledController(), testEnv, createExecutionContext());
     expect(await testEnv.DB.prepare("SELECT status FROM alerts WHERE subject_key=?").bind(`agent-offline:${agentId}`).first()).toMatchObject({ status: "open" });
 
+    const state = await jsonRequest("/api/admin/state", { headers: { cookie: adminCookie } });
+    const stateValue = await state.json<{ alerts: Array<{ kind: string; node_id: string }> }>();
+    expect(stateValue.alerts).toContainEqual(expect.objectContaining({ kind: "agent_offline", node_id: nodeId }));
+
     await testEnv.DB.prepare("UPDATE agents SET last_seen=CURRENT_TIMESTAMP WHERE id=?").bind(agentId).run();
     await worker.scheduled(createScheduledController(), testEnv, createExecutionContext());
     expect(await testEnv.DB.prepare("SELECT status FROM alerts WHERE subject_key=?").bind(`agent-offline:${agentId}`).first()).toMatchObject({ status: "resolved" });
