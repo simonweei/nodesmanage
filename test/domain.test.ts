@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
 import { certificateRequirements, compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
 import { readJsonObject } from "../src/http";
+import { realityKeypair } from "../src/crypto";
 import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src/subscriptions";
+import { x25519 } from "@noble/curves/ed25519.js";
+
+const decodeBase64Url = (value: string): Uint8Array => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - value.length % 4) % 4)), (char) => char.charCodeAt(0));
 
 const client = {
   id: "client-1", name: "Alice", uuid: "11111111-1111-4111-8111-111111111111",
@@ -20,6 +24,11 @@ const cases: [ProfileType, ProfileSettings, string][] = [
 ];
 
 describe("production Protocol Profiles", () => {
+  it("generates a Reality public key that matches its private key", async () => {
+    const pair = await realityKeypair();
+    expect(decodeBase64Url(pair.public_key)).toEqual(x25519.getPublicKey(decodeBase64Url(pair.private_key)));
+  });
+
   it.each(cases)("parses and compiles %s", (type, settings, inboundType) => {
     const parsed = parseProfileSettings(type, settings);
     const inbound = (compileServerConfig(type, parsed, [client]).inbounds as Record<string, unknown>[])[0];
@@ -55,6 +64,23 @@ describe("subscriptions", () => {
     expect((JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { type: string }).type).toBe(protocol);
     expect(mihomoSubscription(client, [node])).toContain("proxies:");
     expect(uriSubscription(client, [node])).toContain(settings.server_address ?? "node.example.com");
+  });
+
+  it("does not enable unsupported uTLS for QUIC outbounds", () => {
+    for (const [type, settings] of [cases[4], cases[5]]) {
+      const node = { id: `node-${type}`, name: "Tokyo", connect_host: "node.example.com", connect_port: settings.listen_port, ingress_mode: "direct" as const, type, settings_json: JSON.stringify(settings) };
+      const outbound = JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { tls: Record<string, unknown> };
+      expect(outbound.tls).not.toHaveProperty("utls");
+    }
+  });
+
+  it("derives the Reality subscription public key from the server private key", async () => {
+    const pair = await realityKeypair();
+    const settings = { ...cases[0][1], reality_private_key: pair.private_key, reality_public_key: "mismatched-public-key" };
+    const node = { id: "node-reality", name: "Tokyo", connect_host: "node.example.com", connect_port: 443, ingress_mode: "direct" as const, type: "vless-reality-vision" as const, settings_json: JSON.stringify(settings) };
+    const outbound = JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { tls: { reality: { public_key: string } } };
+    expect(outbound.tls.reality.public_key).toBe(pair.public_key);
+    expect(uriSubscription(client, [node])).toContain(`pbk=${encodeURIComponent(pair.public_key)}`);
   });
 });
 

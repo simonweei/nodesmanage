@@ -1,24 +1,35 @@
 import type { ClientRecord, NodeRecord, ProfileSettings } from "./domain";
+import { realityPublicKey } from "./crypto";
 
 interface ExpandedNode extends NodeRecord { settings: ProfileSettings }
 const expand = (nodes: NodeRecord[]): ExpandedNode[] => nodes.flatMap((node) => {
   const profiles = node.protocols_json ? JSON.parse(node.protocols_json) as { type: NodeRecord["type"]; settings: ProfileSettings }[] : [{ type: node.type, settings: JSON.parse(node.settings_json) as ProfileSettings }];
-  return profiles.map((profile) => ({ ...node, type: profile.type, settings: node.ingress_mode === "cloudflare_tunnel" ? {
-    ...profile.settings,
+  return profiles.map((profile) => {
+    let settings = profile.settings;
+    if (profile.type === "vless-reality-vision" && settings.reality_private_key) {
+      try {
+        settings = { ...settings, reality_public_key: realityPublicKey(settings.reality_private_key) };
+      } catch {
+        // Keep the stored public key for legacy rows whose private key is not decodable.
+      }
+    }
+    return { ...node, type: profile.type, settings: node.ingress_mode === "cloudflare_tunnel" ? {
+    ...settings,
     listen_port: profile.settings.edge_port || node.connect_port || 443,
     server_address: node.connect_host,
     tls_server_name: node.connect_host,
     websocket_host: node.connect_host,
-  } : profile.settings }));
+  } : settings };
+  });
 });
 const uriHost = (address: string): string => address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
 const yaml = (value: string): string => JSON.stringify(value);
 const tag = (node: ExpandedNode): string => `${node.name} · ${node.type}`;
 const address = (node: ExpandedNode): string => node.settings.server_address || node.connect_host;
-const clientTls = (settings: ProfileSettings, alpn?: string[]): Record<string, unknown> => ({
+const clientTls = (settings: ProfileSettings, alpn?: string[], useUtls = true): Record<string, unknown> => ({
   enabled: true, server_name: settings.tls_server_name,
   ...(alpn ? { alpn } : {}),
-  utls: { enabled: true, fingerprint: "chrome" },
+  ...(useUtls ? { utls: { enabled: true, fingerprint: "chrome" } } : {}),
 });
 
 function singOutbound(client: ClientRecord, node: ExpandedNode): Record<string, unknown> {
@@ -28,8 +39,8 @@ function singOutbound(client: ClientRecord, node: ExpandedNode): Record<string, 
     case "shadowsocks-aead": return { ...common, type: "shadowsocks", method: node.settings.shadowsocks_method, password: `${node.settings.shadowsocks_server_password}:${client.shadowsocks_password}`, multiplex: { enabled: true } };
     case "vless-tls-websocket": return { ...common, type: "vless", uuid: client.uuid, tls: clientTls(node.settings), transport: { type: "ws", path: node.settings.websocket_path, headers: { Host: node.settings.websocket_host } } };
     case "vless-tls-grpc": return { ...common, type: "vless", uuid: client.uuid, tls: clientTls(node.settings, ["h2"]), transport: { type: "grpc", service_name: node.settings.grpc_service_name } };
-    case "hysteria2": return { ...common, type: "hysteria2", password: client.shadowsocks_password, obfs: { type: "salamander", password: node.settings.hysteria2_obfs_password }, tls: clientTls(node.settings) };
-    case "tuic": return { ...common, type: "tuic", uuid: client.uuid, password: client.shadowsocks_password, congestion_control: "bbr", udp_relay_mode: "native", zero_rtt_handshake: false, tls: clientTls(node.settings) };
+    case "hysteria2": return { ...common, type: "hysteria2", password: client.shadowsocks_password, obfs: { type: "salamander", password: node.settings.hysteria2_obfs_password }, tls: clientTls(node.settings, undefined, false) };
+    case "tuic": return { ...common, type: "tuic", uuid: client.uuid, password: client.shadowsocks_password, congestion_control: "bbr", udp_relay_mode: "native", zero_rtt_handshake: false, tls: clientTls(node.settings, undefined, false) };
     case "trojan-tls": return { ...common, type: "trojan", password: client.shadowsocks_password, tls: clientTls(node.settings), multiplex: { enabled: true } };
     case "trojan-tls-websocket": return { ...common, type: "trojan", password: client.shadowsocks_password, tls: clientTls(node.settings), transport: { type: "ws", path: node.settings.websocket_path, headers: { Host: node.settings.websocket_host } } };
   }

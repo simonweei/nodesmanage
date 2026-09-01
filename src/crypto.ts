@@ -1,4 +1,18 @@
+import { x25519 } from "@noble/curves/ed25519.js";
+
 const encoder = new TextEncoder();
+
+function base64Url(value: Uint8Array): string {
+  let binary = "";
+  for (const byte of value) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function decodeBase64Url(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(normalized + "=".repeat((4 - normalized.length % 4) % 4));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
 
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
@@ -31,9 +45,12 @@ export function randomBase64(bytes: number): string {
 }
 
 export async function realityKeypair(): Promise<{ private_key: string; public_key: string }> {
-  const keys = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]) as CryptoKeyPair;
-  const privateJwk = await crypto.subtle.exportKey("jwk", keys.privateKey) as JsonWebKey;
-  const publicJwk = await crypto.subtle.exportKey("jwk", keys.publicKey) as JsonWebKey;
-  if (!privateJwk.d || !publicJwk.x) throw new Error("X25519 key export failed");
-  return { private_key: privateJwk.d, public_key: publicJwk.x };
+  const privateKey = crypto.getRandomValues(new Uint8Array(32));
+  return { private_key: base64Url(privateKey), public_key: base64Url(x25519.getPublicKey(privateKey)) };
+}
+
+export function realityPublicKey(privateKey: string): string {
+  const decoded = decodeBase64Url(privateKey);
+  if (decoded.length !== 32) throw new Error("Reality private key must contain 32 bytes");
+  return base64Url(x25519.getPublicKey(decoded));
 }

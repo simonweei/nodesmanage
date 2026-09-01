@@ -21,5 +21,8 @@
     "typescript": "latest",
     "vitest": "latest",
     "wrangler": "latest"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0"
   }
 }
