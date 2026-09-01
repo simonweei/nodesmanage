@@ -2,7 +2,7 @@ import { requireAdmin, requireAgent } from "./auth";
 import { hmacHex, randomBase64, randomToken, randomUuid, sha256Hex } from "./crypto";
 import { certificateRequirements, compileServerProfiles, ingressCapabilities, isAcmeProfile, isTunnelProfile, parseProfileSettings, parseProfileType, profileDefaults, profileNetworks, tunnelEdgePort, type CertificateRequirement, type ClientRecord, type IngressMode, type NodeRecord, type ProfileType, type ProtocolProfile, type TunnelKind } from "./domain";
 import { booleanField, HttpError, json, numberField, readJsonObject, stringField } from "./http";
-import { mihomoSubscription, singBoxSubscription, uriSubscription } from "./subscriptions";
+import { mihomoSubscription, singBoxSubscription, v2rayNSubscription } from "./subscriptions";
 
 interface ProfileRow {
   id: string;
@@ -406,10 +406,8 @@ async function createSubscriptionGroup(request: Request, env: Env): Promise<Resp
   const nodeIds = stringArray(body.node_ids, "node_ids", 8);
   const clientNames = body.client_names === undefined ? [name] : stringArray(body.client_names, "client_names", 10);
   const placeholders = nodeIds.map(() => "?").join(",");
-  const found = await env.DB.prepare(`SELECT id,agent_id FROM nodes WHERE enabled=1 AND retiring=0 AND agent_id IS NOT NULL
-    AND connect_host<>'' AND ((ingress_mode='direct' AND ingress_status IN ('configured','verified')) OR (ingress_mode='cloudflare_tunnel' AND ingress_status='verified'))
-    AND id IN (${placeholders})`).bind(...nodeIds).all<{ id: string; agent_id: string }>();
-  if (found.results.length !== nodeIds.length) throw new HttpError(400, "one or more VPS nodes are unavailable");
+  const found = await env.DB.prepare(`SELECT id,agent_id FROM nodes WHERE id IN (${placeholders})`).bind(...nodeIds).all<{ id: string; agent_id: string | null }>();
+  if (found.results.length !== nodeIds.length) throw new HttpError(400, "one or more VPS nodes do not exist");
   const members = await Promise.all(clientNames.map(async (clientName) => {
     const token = randomToken();
     return { id: randomUuid(), client_id: randomUuid(), name: clientName, uuid: randomUuid(), shadowsocks_password: randomBase64(16), token, token_hash: await sha256Hex(token) };
@@ -417,14 +415,16 @@ async function createSubscriptionGroup(request: Request, env: Env): Promise<Resp
   const nodeValues = nodeIds.map(() => "(?,?)").join(",");
   const clientValues = members.map(() => "(?,?,?,?)").join(",");
   const subscriptionValues = members.map(() => "(?,?,?,?,?)").join(",");
-  const agentIds = found.results.map((row) => row.agent_id);
-  await env.DB.batch([
+  const agentIds = found.results.flatMap((row) => row.agent_id ? [row.agent_id] : []);
+  const statements = [
     env.DB.prepare("INSERT INTO subscription_groups(id,name) VALUES(?,?)").bind(id, name),
     env.DB.prepare(`INSERT INTO subscription_group_nodes(group_id,node_id) VALUES ${nodeValues}`).bind(...nodeIds.flatMap((nodeId) => [id, nodeId])),
     env.DB.prepare(`INSERT INTO clients(id,name,uuid,shadowsocks_password) VALUES ${clientValues}`).bind(...members.flatMap((member) => [member.client_id, member.name, member.uuid, member.shadowsocks_password])),
     env.DB.prepare(`INSERT INTO subscriptions(id,name,group_id,client_id,token_hash) VALUES ${subscriptionValues}`).bind(...members.flatMap((member) => [member.id, name, id, member.client_id, member.token_hash])),
-    enqueueReconcileStatement(env, agentIds, "subscription group created")!,
-  ]);
+  ];
+  const queue = enqueueReconcileStatement(env, agentIds, "subscription group created");
+  if (queue) statements.push(queue);
+  await env.DB.batch(statements);
   const published = await publishAgents(agentIds, env, "subscription group created");
   return json({ id, name, node_ids: nodeIds, members: members.map(({ id: subscriptionId, name: clientName, token }) => ({ id: subscriptionId, name: clientName, token })), published }, { status: 201 });
 }
@@ -438,11 +438,9 @@ async function updateSubscriptionGroup(id: string, request: Request, env: Env): 
   const nodeIds = stringArray(body.node_ids, "node_ids", 8);
   const oldAgents = await agentIdsForGroups(env, [id]);
   const placeholders = nodeIds.map(() => "?").join(",");
-  const found = await env.DB.prepare(`SELECT id,agent_id FROM nodes WHERE enabled=1 AND retiring=0 AND agent_id IS NOT NULL
-    AND connect_host<>'' AND ((ingress_mode='direct' AND ingress_status IN ('configured','verified')) OR (ingress_mode='cloudflare_tunnel' AND ingress_status='verified'))
-    AND id IN (${placeholders})`).bind(...nodeIds).all<{ id: string; agent_id: string }>();
-  if (found.results.length !== nodeIds.length) throw new HttpError(400, "one or more VPS nodes are unavailable");
-  const affected = [...new Set([...oldAgents, ...found.results.map((row) => row.agent_id)])];
+  const found = await env.DB.prepare(`SELECT id,agent_id FROM nodes WHERE id IN (${placeholders})`).bind(...nodeIds).all<{ id: string; agent_id: string | null }>();
+  if (found.results.length !== nodeIds.length) throw new HttpError(400, "one or more VPS nodes do not exist");
+  const affected = [...new Set([...oldAgents, ...found.results.flatMap((row) => row.agent_id ? [row.agent_id] : [])])];
   if (affected.length > 8) throw new HttpError(400, "one update can affect at most 8 installed VPS nodes");
   const values = nodeIds.map(() => "(?,?)").join(",");
   const statements = [
@@ -802,8 +800,8 @@ async function subscription(path: string, env: Env): Promise<Response> {
   const match = /^\/sub\/([a-f0-9]{64})\/(sing-box|mihomo|uri)$/.exec(path);
   if (!match) throw new HttpError(404, "subscription not found");
   const tokenHash = await sha256Hex(match[1] ?? "");
-  const subscriptionRow = await env.DB.prepare(`SELECT s.group_id,c.id,c.name,c.uuid,c.shadowsocks_password FROM subscriptions s JOIN clients c ON c.id=s.client_id
-    JOIN subscription_groups g ON g.id=s.group_id WHERE s.token_hash=? AND s.enabled=1 AND c.enabled=1 AND g.enabled=1`).bind(tokenHash).first<ClientRecord & { group_id: string }>();
+  const subscriptionRow = await env.DB.prepare(`SELECT s.group_id,g.name AS group_name,c.id,c.name,c.uuid,c.shadowsocks_password FROM subscriptions s JOIN clients c ON c.id=s.client_id
+    JOIN subscription_groups g ON g.id=s.group_id WHERE s.token_hash=? AND s.enabled=1 AND c.enabled=1 AND g.enabled=1`).bind(tokenHash).first<ClientRecord & { group_id: string; group_name: string }>();
   if (!subscriptionRow) throw new HttpError(404, "subscription not found");
   const client: ClientRecord = subscriptionRow;
   const nodes = await env.DB.prepare(`SELECT n.id,n.name,n.connect_host,n.connect_port,n.ingress_mode,p.type,p.settings_json,p.protocols_json
@@ -813,9 +811,10 @@ async function subscription(path: string, env: Env): Promise<Response> {
     AND a.current_revision IS NOT NULL AND a.current_revision=a.desired_revision
     AND a.singbox_running=1 AND a.last_seen>datetime('now','-5 minutes') ORDER BY n.created_at`).bind(subscriptionRow.group_id).all<NodeRecord>();
   const format = match[2];
-  const output = format === "sing-box" ? singBoxSubscription(client, nodes.results) : format === "mihomo" ? mihomoSubscription(client, nodes.results) : uriSubscription(client, nodes.results);
+  const output = format === "sing-box" ? singBoxSubscription(client, nodes.results) : format === "mihomo" ? mihomoSubscription(client, nodes.results) : v2rayNSubscription(client, nodes.results);
   const contentType = format === "mihomo" ? "text/yaml; charset=utf-8" : format === "sing-box" ? "application/json; charset=utf-8" : "text/plain; charset=utf-8";
-  return new Response(output, { headers: { "content-type": contentType, "cache-control": "private, max-age=60", "subscription-userinfo": "upload=0; download=0; total=0; expire=0" } });
+  const title = String(subscriptionRow.group_name);
+  return new Response(output, { headers: { "content-type": contentType, "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(title)}`, "cache-control": "private, max-age=60", "subscription-userinfo": "upload=0; download=0; total=0; expire=0" } });
 }
 
 async function enforcePublicRateLimit(request: Request, env: Env): Promise<void> {

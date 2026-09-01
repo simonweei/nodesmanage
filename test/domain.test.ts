@@ -3,7 +3,7 @@ import { handleAdminAuth, hasAdminSession, requireAdmin } from "../src/auth";
 import { certificateRequirements, compileServerConfig, compileServerProfiles, ingressCapabilities, parseProfileSettings, tunnelEdgePort, type ProfileSettings, type ProfileType } from "../src/domain";
 import { readJsonObject } from "../src/http";
 import { realityKeypair } from "../src/crypto";
-import { mihomoSubscription, singBoxSubscription, uriSubscription } from "../src/subscriptions";
+import { mihomoSubscription, singBoxSubscription, uriSubscription, v2rayNSubscription } from "../src/subscriptions";
 import { x25519 } from "@noble/curves/ed25519.js";
 
 const decodeBase64Url = (value: string): Uint8Array => Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - value.length % 4) % 4)), (char) => char.charCodeAt(0));
@@ -108,6 +108,22 @@ describe("subscriptions", () => {
     const outbound = JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { tls: { reality: { public_key: string } } };
     expect(outbound.tls.reality.public_key).toBe(pair.public_key);
     expect(uriSubscription(client, [node])).toContain(`pbk=${encodeURIComponent(pair.public_key)}`);
+  });
+
+  it("encodes every URI node as one standard v2rayN subscription", () => {
+    const nodes = ["Tokyo", "Osaka"].map((name, index) => ({
+      id: `node-${index}`,
+      name,
+      connect_host: `${name.toLowerCase()}.example.com`,
+      connect_port: 443,
+      ingress_mode: "direct" as const,
+      type: "vless-reality-vision" as const,
+      settings_json: JSON.stringify(cases[0][1]),
+    }));
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(v2rayNSubscription(client, nodes)), (character) => character.charCodeAt(0)));
+    expect(decoded.trim().split("\n")).toHaveLength(2);
+    expect(decoded).toContain("Tokyo");
+    expect(decoded).toContain("Osaka");
   });
 });
 

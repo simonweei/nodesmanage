@@ -7,6 +7,7 @@
   <title>NodeManage</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/subscriptions.css">
 </head>
 <body>
   <header class="topbar">
@@ -22,7 +23,7 @@
       <div class="list-shell"><div class="vps-grid list-head"><span>VPS</span><span>状态</span><span>运行版本</span><span>资源</span><span>操作</span></div><div id="vps-list"></div></div>
     </section>
     <section id="subscriptions-view" class="view">
-      <div class="page-heading"><div><p class="eyebrow">DELIVERY</p><h1>订阅列表 <span id="subscription-count" class="count">0</span></h1><p>一个订阅可绑定多个 VPS，并为每个客户端生成独立链接。</p></div><button id="create-subscription">＋ 创建订阅</button></div>
+      <div class="page-heading"><div><p class="eyebrow">DELIVERY</p><h1>订阅列表 <span id="subscription-count" class="count">0</span></h1><p>按需勾选 VPS，创建后自动生成独立订阅链接。</p></div><button id="create-subscription">＋ 创建订阅</button></div>
       <div class="list-shell"><div class="subscription-grid list-head"><span>订阅</span><span>绑定 VPS</span><span>客户端</span><span>状态</span><span>操作</span></div><div id="subscription-list"></div></div>
     </section>
   </main>

@@ -106,3 +106,10 @@ function uri(client: ClientRecord, node: ExpandedNode): string {
 export function uriSubscription(client: ClientRecord, records: NodeRecord[]): string {
   return `${expand(records).map((node) => uri(client, node)).join("\n")}\n`;
 }
+
+export function v2rayNSubscription(client: ClientRecord, records: NodeRecord[]): string {
+  const bytes = new TextEncoder().encode(uriSubscription(client, records));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}

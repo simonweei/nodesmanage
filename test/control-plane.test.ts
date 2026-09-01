@@ -198,13 +198,29 @@ describe("control-plane production flow", () => {
   });
 
   it("creates subscriptions, automatically publishes and serves only applied healthy nodes", async () => {
+    const pendingVps = await jsonRequest("/api/admin/vps", {
+      method: "POST",
+      headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Pending install", connect_host: "pending.example.com", ingress_mode: "direct", protocols: [{ type: "vless-reality-vision", settings: { listen_port: 443 } }] }),
+    });
+    expect(pendingVps.status).toBe(201);
+    const pendingVpsId = (await pendingVps.json<{ id: string }>()).id;
+    const pendingOnlyGroup = await jsonRequest("/api/admin/subscription-groups", {
+      method: "POST",
+      headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Pending only", node_ids: [pendingVpsId] }),
+    });
+    expect(pendingOnlyGroup.status).toBe(201);
+    const pendingOnlyGroupValue = await pendingOnlyGroup.json<{ id: string; published: unknown[] }>();
+    expect(pendingOnlyGroupValue.published).toHaveLength(0);
+    expect((await jsonRequest(`/api/admin/subscription-groups/${pendingOnlyGroupValue.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
     const group = await jsonRequest("/api/admin/subscription-groups", {
       method: "POST",
       headers: { cookie: adminCookie },
-      body: JSON.stringify({ name: "Team", node_ids: [nodeId], client_names: ["Alice"] }),
+      body: JSON.stringify({ name: "Team", node_ids: [nodeId, pendingVpsId], client_names: ["Alice"] }),
     });
     expect(group.status).toBe(201);
-    const groupValue = await group.json<{ members: Array<{ id: string; token: string }>; published: Array<{ revision: number }> }>();
+    const groupValue = await group.json<{ id: string; members: Array<{ id: string; token: string }>; published: Array<{ revision: number }> }>();
     subscriptionToken = groupValue.members[0]?.token ?? "";
     expect(groupValue.published).toHaveLength(1);
     const revision = groupValue.published[0]?.revision;
@@ -212,6 +228,7 @@ describe("control-plane production flow", () => {
 
     const beforeApply = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.4" } });
     expect(beforeApply.status).toBe(200);
+    expect(beforeApply.headers.get("content-disposition")).toBe("attachment; filename*=UTF-8''Team");
     expect((await beforeApply.json<{ outbounds: unknown[] }>()).outbounds).toHaveLength(0);
 
     const sync = await jsonRequest("/api/agent/sync", {
@@ -234,6 +251,9 @@ describe("control-plane production flow", () => {
     const config = await active.json<{ outbounds: Array<{ server: string }> }>();
     expect(config.outbounds).toHaveLength(1);
     expect(config.outbounds[0]?.server).toBe("node.example.com");
+
+    expect((await jsonRequest(`/api/admin/vps/${pendingVpsId}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM subscription_group_nodes WHERE group_id=? AND node_id=?").bind(groupValue.id, pendingVpsId).first()).toMatchObject({ count: 0 });
   });
 
   it("opens and resolves offline alerts during scheduled maintenance", async () => {

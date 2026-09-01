@@ -1,0 +1,68 @@
+.check-row:has(input:checked) {
+  border-color: #3e8d70;
+  background: #10231d;
+}
+
+.check-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.check-copy strong {
+  color: #dce5f3;
+  font-size: 13px;
+}
+
+.check-copy small,
+.toggle-row small {
+  color: #748196;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 14px;
+  border: 1px solid var(--line);
+  background: #0c1119;
+  border-radius: 9px;
+}
+
+.toggle-row > span {
+  display: grid;
+  gap: 3px;
+}
+
+.toggle-row strong {
+  color: #dce5f3;
+  font-size: 13px;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+}
+
+.subscription-section {
+  display: grid;
+  gap: 12px;
+}
+
+.subscription-section > h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.danger-zone {
+  border-top: 1px solid #512c34;
+  margin-top: 24px;
+  padding-top: 18px;
+}
+
+.danger-zone button {
+  background: #321d22;
+  color: #ffb4bd;
+  border: 1px solid #69343e;
+}
