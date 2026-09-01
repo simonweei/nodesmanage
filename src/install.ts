@@ -13,6 +13,7 @@ INGRESS_MODE='direct'
 TUNNEL_KIND='none'
 TUNNEL_HOSTNAME=''
 TUNNEL_TOKEN=''
+CONNECT_PORT='443'
 ORIGIN_PORT='0'
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -23,6 +24,7 @@ while [ "$#" -gt 0 ]; do
     --tunnel-kind) TUNNEL_KIND="\${2:-}"; shift 2 ;;
     --tunnel-hostname) TUNNEL_HOSTNAME="\${2:-}"; shift 2 ;;
     --tunnel-token) TUNNEL_TOKEN="\${2:-}"; shift 2 ;;
+    --connect-port) CONNECT_PORT="\${2:-}"; shift 2 ;;
     --origin-port) ORIGIN_PORT="\${2:-}"; shift 2 ;;
     *) echo "[NM-E101] unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -68,7 +70,7 @@ download "$SERVER_URL/downloads/v${AGENT_VERSION}/nodemanage-agent-linux-$ARCH" 
 ACTUAL="$(sha256_file "$TMP_DIR/nodemanage-agent")"
 [ "$EXPECTED" = "$ACTUAL" ] || { echo "[NM-E108] Agent checksum mismatch" >&2; exit 1; }
 chmod 0755 "$TMP_DIR/nodemanage-agent"
-"$TMP_DIR/nodemanage-agent" install --server "$SERVER_URL" --ticket "$TICKET" --name "$NAME" --mode "$MODE" --manifest "$MANIFEST_URL" --ingress-mode "$INGRESS_MODE" --tunnel-kind "$TUNNEL_KIND" --tunnel-hostname "$TUNNEL_HOSTNAME" --tunnel-token "$TUNNEL_TOKEN" --origin-port "$ORIGIN_PORT"
+"$TMP_DIR/nodemanage-agent" install --server "$SERVER_URL" --ticket "$TICKET" --name "$NAME" --mode "$MODE" --manifest "$MANIFEST_URL" --ingress-mode "$INGRESS_MODE" --tunnel-kind "$TUNNEL_KIND" --tunnel-hostname "$TUNNEL_HOSTNAME" --tunnel-token "$TUNNEL_TOKEN" --connect-port "$CONNECT_PORT" --origin-port "$ORIGIN_PORT"
 `;
   return new Response(script, { headers: {
     "content-type": "text/x-shellscript; charset=utf-8",

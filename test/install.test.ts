@@ -14,6 +14,9 @@ describe("portable bootstrap", () => {
     expect(script).not.toContain("SHA256SUMS");
     expect(script).toContain("nodemanage-agent\" install");
     expect(script).toContain("--mode");
+    expect(script).toContain("CONNECT_PORT='443'");
+    expect(script).toContain('--connect-port) CONNECT_PORT="${2:-}"');
+    expect(script).toContain('--connect-port "$CONNECT_PORT"');
     expect(script).toContain("user mode must run without sudo");
     expect(script).not.toContain("run this installer as root");
     expect(script).not.toContain("systemctl");
