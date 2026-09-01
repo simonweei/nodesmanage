@@ -93,7 +93,7 @@ curl -fsSL https://管理域名/install.sh | sh -s -- --ticket 一次性票据 -
 
 当 PID 1 不是 systemd 且没有 OpenRC（例如 Cloud Studio、部分 Docker/LXC 容器）时，Agent 0.11.0 会自动使用 `standalone` 模式，通过独立进程、PID 文件和日志管理 sing-box、Agent 和 cloudflared。该模式可完成配置同步、健康检查、重启和回滚，但无法保证容器或工作区重建后的开机自启；生产 VPS 仍优先使用 systemd/OpenRC。
 
-Tunnel 模式只提供 Cloudflare Public Hostname 能直接承载的 VLESS/Trojan + TLS + WebSocket 组合：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 固定公网端口 443 且只能启用一个协议，会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，可同时启用两个协议，每个协议分别使用 443、2053、2083、2087、2096 或 8443 中不重复的公网端口、本地端口和 WebSocket 路径。Agent 在 `127.0.0.1` 提供轻量路径路由，再转发到各 sing-box 入站。Named Tunnel 安装命令需填写已配置路由的域名和 Tunnel Token；Token 不写入 D1，只保存在 VPS 的 `0600` Agent 配置中。
+Tunnel 模式只提供 Cloudflare Public Hostname 能直接承载的 VLESS/Trojan + TLS + WebSocket 组合：sing-box 只监听 `127.0.0.1:高位端口`，TLS 在 Cloudflare 边缘终止。Quick Tunnel 固定公网端口 443 且只能启用一个协议，会自动发现随机 `trycloudflare.com` 域名，适合实机诊断，不提供 SLA；生产应选择 Named Tunnel，可同时启用两个协议，每个协议分别使用 443、2053、2083、2087、2096 或 8443 中不重复的公网端口、本地端口和 WebSocket 路径。Agent 在 `127.0.0.1` 提供轻量路径路由，再转发到各 sing-box 入站。创建 Named Tunnel VPS 时需填写已配置路由的域名和 Tunnel Token；Token 只在当前浏览器页面中用于生成一次性安装命令，不会上传或写入 D1，安装后仅保存在 VPS 的 `0600` Agent 配置中。
 
 Named Tunnel 的“公网域名”必须填写 Cloudflare Zero Trust 中该 Tunnel 已配置的 Public Hostname，例如 `tunnel.serverdomain.com`，不能填写源站 IP，也不会像 Quick Tunnel 一样自动生成。Direct 模式只需填写一次公网连接地址和一次公共 ACME 邮箱：选择 TLS 协议时，控制面自动将公网域名用于订阅地址、TLS/SNI、证书域名及 WebSocket Host。若 VPS 公网域名是 `serverdomain.com`，请先让其 A/AAAA 记录直连 VPS，再填写 `serverdomain.com` 和有效邮箱；每个协议仅需分别设置监听端口、WebSocket 路径或 gRPC Service Name。
 
