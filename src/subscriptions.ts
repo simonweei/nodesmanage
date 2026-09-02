@@ -54,6 +54,8 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
   const directTag = "direct";
   const localDnsTag = "local-dns";
   const fakeIpDnsTag = "fakeip-dns";
+  const chinaSiteRuleSetTag = "geosite-cn";
+  const chinaIpRuleSetTag = "geoip-cn";
   const proxyTags = proxyOutbounds.map((outbound) => String(outbound.tag));
   return JSON.stringify({
     dns: {
@@ -63,6 +65,7 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
         { type: "fakeip", tag: fakeIpDnsTag, inet4_range: "198.18.0.0/15", inet6_range: "fc00::/18" },
       ],
       rules: [
+        { rule_set: chinaSiteRuleSetTag, action: "route", server: localDnsTag },
         { query_type: ["A", "AAAA"], action: "route", server: fakeIpDnsTag },
       ],
     },
@@ -89,11 +92,30 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
         { action: "sniff" },
         { protocol: "dns", action: "hijack-dns" },
         { ip_is_private: true, action: "route", outbound: directTag },
+        { rule_set: chinaSiteRuleSetTag, action: "route", outbound: directTag },
+        { rule_set: chinaIpRuleSetTag, action: "route", outbound: directTag },
+      ],
+      rule_set: [
+        {
+          type: "remote",
+          tag: chinaSiteRuleSetTag,
+          format: "binary",
+          url: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs",
+          update_interval: "1d",
+        },
+        {
+          type: "remote",
+          tag: chinaIpRuleSetTag,
+          format: "binary",
+          url: "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+          update_interval: "1d",
+        },
       ],
       final: selectorTag,
       default_domain_resolver: localDnsTag,
       auto_detect_interface: true,
     },
+    experimental: { cache_file: { enabled: true } },
   }, null, 2);
 }
 

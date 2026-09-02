@@ -106,6 +106,7 @@ CREATE TABLE subscriptions (
   group_id TEXT NOT NULL,
   client_id TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
+  token_value TEXT,
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

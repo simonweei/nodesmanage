@@ -95,7 +95,8 @@ describe("subscriptions", () => {
       dns: { servers: Array<Record<string, unknown>>; rules: Array<Record<string, unknown>> };
       inbounds: Array<{ type: string; address: string[]; auto_route: boolean; strict_route: boolean }>;
       outbounds: Array<{ type: string; tag: string; outbounds?: string[]; default?: string }>;
-      route: { final: string; default_domain_resolver: string; auto_detect_interface: boolean; rules: Array<Record<string, unknown>> };
+      route: { final: string; default_domain_resolver: string; auto_detect_interface: boolean; rules: Array<Record<string, unknown>>; rule_set: Array<Record<string, unknown>> };
+      experimental: { cache_file: { enabled: boolean } };
     };
     expect(singBox.outbounds[0]?.type).toBe(protocol);
     expect(singBox.outbounds[1]).toMatchObject({ type: "selector", tag: "节点选择", outbounds: [`Tokyo · ${type}`], default: `Tokyo · ${type}` });
@@ -106,7 +107,10 @@ describe("subscriptions", () => {
       { type: "udp", tag: "local-dns", server: "223.5.5.5" },
       { type: "fakeip", tag: "fakeip-dns", inet4_range: "198.18.0.0/15", inet6_range: "fc00::/18" },
     ]);
-    expect(singBox.dns.rules).toEqual([{ query_type: ["A", "AAAA"], action: "route", server: "fakeip-dns" }]);
+    expect(singBox.dns.rules).toEqual([
+      { rule_set: "geosite-cn", action: "route", server: "local-dns" },
+      { query_type: ["A", "AAAA"], action: "route", server: "fakeip-dns" },
+    ]);
     expect(singBox.route).toMatchObject({
       final: "节点选择",
       default_domain_resolver: "local-dns",
@@ -115,8 +119,27 @@ describe("subscriptions", () => {
         { action: "sniff" },
         { protocol: "dns", action: "hijack-dns" },
         { ip_is_private: true, action: "route", outbound: "direct" },
+        { rule_set: "geosite-cn", action: "route", outbound: "direct" },
+        { rule_set: "geoip-cn", action: "route", outbound: "direct" },
       ],
     });
+    expect(singBox.route.rule_set).toEqual([
+      {
+        type: "remote",
+        tag: "geosite-cn",
+        format: "binary",
+        url: "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-cn.srs",
+        update_interval: "1d",
+      },
+      {
+        type: "remote",
+        tag: "geoip-cn",
+        format: "binary",
+        url: "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+        update_interval: "1d",
+      },
+    ]);
+    expect(singBox.experimental.cache_file).toEqual({ enabled: true });
     expect(mihomoSubscription(client, [node])).toContain("proxies:");
     expect(uriSubscription(client, [node])).toContain(settings.server_address ?? "node.example.com");
   });

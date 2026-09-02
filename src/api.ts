@@ -410,17 +410,18 @@ async function createSubscriptionGroup(request: Request, env: Env): Promise<Resp
   if (found.results.length !== nodeIds.length) throw new HttpError(400, "one or more VPS nodes do not exist");
   const members = await Promise.all(clientNames.map(async (clientName) => {
     const token = randomToken();
-    return { id: randomUuid(), client_id: randomUuid(), name: clientName, uuid: randomUuid(), shadowsocks_password: randomBase64(16), token, token_hash: await sha256Hex(token) };
+    const subscriptionId = randomUuid();
+    return { id: subscriptionId, client_id: randomUuid(), name: clientName, uuid: randomUuid(), shadowsocks_password: randomBase64(16), token, token_hash: await sha256Hex(token) };
   }));
   const nodeValues = nodeIds.map(() => "(?,?)").join(",");
   const clientValues = members.map(() => "(?,?,?,?)").join(",");
-  const subscriptionValues = members.map(() => "(?,?,?,?,?)").join(",");
+  const subscriptionValues = members.map(() => "(?,?,?,?,?,?)").join(",");
   const agentIds = found.results.flatMap((row) => row.agent_id ? [row.agent_id] : []);
   const statements = [
     env.DB.prepare("INSERT INTO subscription_groups(id,name) VALUES(?,?)").bind(id, name),
     env.DB.prepare(`INSERT INTO subscription_group_nodes(group_id,node_id) VALUES ${nodeValues}`).bind(...nodeIds.flatMap((nodeId) => [id, nodeId])),
     env.DB.prepare(`INSERT INTO clients(id,name,uuid,shadowsocks_password) VALUES ${clientValues}`).bind(...members.flatMap((member) => [member.client_id, member.name, member.uuid, member.shadowsocks_password])),
-    env.DB.prepare(`INSERT INTO subscriptions(id,name,group_id,client_id,token_hash) VALUES ${subscriptionValues}`).bind(...members.flatMap((member) => [member.id, name, id, member.client_id, member.token_hash])),
+    env.DB.prepare(`INSERT INTO subscriptions(id,name,group_id,client_id,token_hash,token_value) VALUES ${subscriptionValues}`).bind(...members.flatMap((member) => [member.id, name, id, member.client_id, member.token_hash, member.token])),
   ];
   const queue = enqueueReconcileStatement(env, agentIds, "subscription group created");
   if (queue) statements.push(queue);
@@ -466,7 +467,7 @@ async function addSubscriptionClient(groupId: string, request: Request, env: Env
   const token = randomToken();
   const statements = [
     env.DB.prepare("INSERT INTO clients(id,name,uuid,shadowsocks_password) VALUES(?,?,?,?)").bind(clientId, name, randomUuid(), randomBase64(16)),
-    env.DB.prepare("INSERT INTO subscriptions(id,name,group_id,client_id,token_hash) VALUES(?,?,?,?,?)").bind(subscriptionId, group.name, groupId, clientId, await sha256Hex(token)),
+    env.DB.prepare("INSERT INTO subscriptions(id,name,group_id,client_id,token_hash,token_value) VALUES(?,?,?,?,?,?)").bind(subscriptionId, group.name, groupId, clientId, await sha256Hex(token), token),
   ];
   const queue = enqueueReconcileStatement(env, agents, "subscription client added");
   if (queue) statements.push(queue);
@@ -477,9 +478,18 @@ async function addSubscriptionClient(groupId: string, request: Request, env: Env
 
 async function rotateSubscriptionToken(id: string, env: Env): Promise<Response> {
   const token = randomToken();
-  const result = await env.DB.prepare("UPDATE subscriptions SET token_hash=?,updated_at=CURRENT_TIMESTAMP WHERE id=? RETURNING id,name").bind(await sha256Hex(token), id).first<{ id: string; name: string }>();
+  const result = await env.DB.prepare(`UPDATE subscriptions SET token_hash=?,token_value=?,updated_at=CURRENT_TIMESTAMP WHERE id=?
+    RETURNING id,(SELECT name FROM subscription_groups WHERE id=subscriptions.group_id) AS name`).bind(await sha256Hex(token), token, id).first<{ id: string; name: string }>();
   if (!result) throw new HttpError(404, "subscription not found");
   return json({ id, name: result.name, token });
+}
+
+async function currentSubscriptionToken(id: string, env: Env): Promise<Response> {
+  const result = await env.DB.prepare(`SELECT s.id,g.name,s.token_value FROM subscriptions s
+    JOIN subscription_groups g ON g.id=s.group_id WHERE s.id=?`).bind(id).first<{ id: string; name: string; token_value: string | null }>();
+  if (!result) throw new HttpError(404, "subscription not found");
+  if (!result.token_value) throw new HttpError(409, "请先轮换一次令牌以生成可再次显示的订阅地址");
+  return json({ id, name: result.name, token: result.token_value }, { headers: { "cache-control": "no-store" } });
 }
 
 async function deleteSubscription(id: string, env: Env): Promise<Response> {
@@ -878,6 +888,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if (groupClientId && request.method === "POST") return addSubscriptionClient(groupClientId, request, env);
   const rotateId = routeParam(path, /^\/api\/admin\/subscriptions\/([^/]+)\/rotate$/);
   if (rotateId && request.method === "POST") return rotateSubscriptionToken(rotateId, env);
+  const tokenId = routeParam(path, /^\/api\/admin\/subscriptions\/([^/]+)\/token$/);
+  if (tokenId && request.method === "GET") return currentSubscriptionToken(tokenId, env);
   const subscriptionId = routeParam(path, /^\/api\/admin\/subscriptions\/([^/]+)$/);
   if (subscriptionId && request.method === "DELETE") return deleteSubscription(subscriptionId, env);
   const clientId = routeParam(path, /^\/api\/admin\/clients\/([^/]+)$/);

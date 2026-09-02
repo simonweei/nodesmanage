@@ -222,7 +222,13 @@ describe("control-plane production flow", () => {
     expect(group.status).toBe(201);
     const groupValue = await group.json<{ id: string; members: Array<{ id: string; token: string }>; published: Array<{ revision: number }> }>();
     subscriptionToken = groupValue.members[0]?.token ?? "";
+    const subscriptionId = groupValue.members[0]?.id ?? "";
     expect(groupValue.published).toHaveLength(1);
+    const currentToken = await jsonRequest(`/api/admin/subscriptions/${subscriptionId}/token`, { headers: { cookie: adminCookie } });
+    expect(currentToken.status).toBe(200);
+    expect(currentToken.headers.get("cache-control")).toBe("no-store");
+    expect(await currentToken.json()).toMatchObject({ id: subscriptionId, name: "Team", token: subscriptionToken });
+    expect((await jsonRequest(`/api/admin/subscriptions/${subscriptionId}/token`)).status).toBe(401);
     const revision = groupValue.published[0]?.revision;
     expect(revision).toBeTypeOf("number");
 
@@ -248,7 +254,7 @@ describe("control-plane production flow", () => {
 
     const active = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.4" } });
     expect(active.status).toBe(200);
-    const config = await active.json<{ dns: { servers: Array<{ type: string; tag: string }>; rules: Array<{ server: string }> }; inbounds: Array<{ type: string; auto_route: boolean }>; outbounds: Array<{ type: string; tag: string; server?: string; outbounds?: string[] }>; route: { final: string; default_domain_resolver: string } }>();
+    const config = await active.json<{ dns: { servers: Array<{ type: string; tag: string }>; rules: Array<{ server: string }> }; inbounds: Array<{ type: string; auto_route: boolean }>; outbounds: Array<{ type: string; tag: string; server?: string; outbounds?: string[] }>; route: { final: string; default_domain_resolver: string; rules: Array<{ rule_set?: string; outbound?: string }>; rule_set: Array<{ tag: string }> }; experimental: { cache_file: { enabled: boolean } } }>();
     expect(config.outbounds).toHaveLength(3);
     expect(config.outbounds[0]?.server).toBe("node.example.com");
     expect(config.outbounds[1]).toMatchObject({ type: "selector", tag: "节点选择", outbounds: ["Tokyo 1 · vless-reality-vision"] });
@@ -256,12 +262,30 @@ describe("control-plane production flow", () => {
     expect(config.inbounds).toContainEqual(expect.objectContaining({ type: "tun", auto_route: true }));
     expect(config.route).toMatchObject({ final: "节点选择", default_domain_resolver: "local-dns" });
     expect(config.dns.servers).toContainEqual(expect.objectContaining({ type: "fakeip", tag: "fakeip-dns" }));
+    expect(config.dns.rules).toContainEqual(expect.objectContaining({ rule_set: "geosite-cn", server: "local-dns" }));
     expect(config.dns.rules).toContainEqual(expect.objectContaining({ server: "fakeip-dns" }));
+    expect(config.route.rules).toContainEqual({ rule_set: "geosite-cn", action: "route", outbound: "direct" });
+    expect(config.route.rules).toContainEqual({ rule_set: "geoip-cn", action: "route", outbound: "direct" });
+    expect(config.route.rule_set.map(({ tag }) => tag)).toEqual(["geosite-cn", "geoip-cn"]);
+    expect(config.experimental.cache_file.enabled).toBe(true);
 
     const shadowsocks = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/shadowsocks`, { headers: { "cf-connecting-ip": "198.51.100.4" } });
     expect(shadowsocks.status).toBe(200);
     expect(shadowsocks.headers.get("content-type")).toBe("application/json; charset=utf-8");
     expect(await shadowsocks.json()).toEqual({ version: 1, servers: [] });
+
+    await testEnv.DB.prepare("UPDATE subscriptions SET token_value=NULL WHERE id=?").bind(subscriptionId).run();
+    expect((await jsonRequest(`/api/admin/subscriptions/${subscriptionId}/token`, { headers: { cookie: adminCookie } })).status).toBe(409);
+    const rotated = await jsonRequest(`/api/admin/subscriptions/${subscriptionId}/rotate`, { method: "POST", headers: { cookie: adminCookie }, body: "{}" });
+    const rotatedValue = await rotated.json<{ id: string; name: string; token: string }>();
+    expect(rotated.status).toBe(200);
+    expect(rotatedValue).toMatchObject({ id: subscriptionId, name: "Team" });
+    expect(rotatedValue.token).not.toBe(subscriptionToken);
+    expect((await SELF.fetch(`${origin}/sub/${subscriptionToken}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.4" } })).status).toBe(404);
+    const displayed = await jsonRequest(`/api/admin/subscriptions/${subscriptionId}/token`, { headers: { cookie: adminCookie } });
+    expect(await displayed.json()).toMatchObject({ token: rotatedValue.token });
+    expect((await SELF.fetch(`${origin}/sub/${rotatedValue.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.4" } })).status).toBe(200);
+    subscriptionToken = rotatedValue.token;
 
     expect((await jsonRequest(`/api/admin/vps/${pendingVpsId}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
     expect(await testEnv.DB.prepare("SELECT COUNT(*) AS count FROM subscription_group_nodes WHERE group_id=? AND node_id=?").bind(groupValue.id, pendingVpsId).first()).toMatchObject({ count: 0 });

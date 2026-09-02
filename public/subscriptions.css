@@ -45,6 +45,17 @@
   accent-color: var(--accent);
 }
 
+.subscription-control-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.subscription-control-row > button {
+  white-space: nowrap;
+}
+
 .subscription-section {
   display: grid;
   gap: 12px;
@@ -174,6 +185,14 @@
 }
 
 @media (max-width: 520px) {
+  .subscription-control-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .subscription-control-row .toggle-row {
+    grid-column: 1 / -1;
+  }
+
   .subscription-address-copy code {
     max-width: 52vw;
   }
