@@ -92,12 +92,14 @@ describe("subscriptions", () => {
   it.each(cases)("generates sing-box, Mihomo and URI for %s", (type, settings, protocol) => {
     const node = { id: `node-${type}`, name: "Tokyo", connect_host: "node.example.com", connect_port: settings.listen_port, ingress_mode: "direct" as const, type, settings_json: JSON.stringify(settings) };
     const singBox = JSON.parse(singBoxSubscription(client, [node])) as {
+      http_clients: Array<{ tag: string; engine: string; detour: string }>;
       dns: { servers: Array<Record<string, unknown>>; rules: Array<Record<string, unknown>> };
       inbounds: Array<{ type: string; address: string[]; auto_route: boolean; strict_route: boolean }>;
       outbounds: Array<{ type: string; tag: string; outbounds?: string[]; default?: string }>;
-      route: { final: string; default_domain_resolver: string; auto_detect_interface: boolean; rules: Array<Record<string, unknown>>; rule_set: Array<Record<string, unknown>> };
+      route: { final: string; default_http_client: string; default_domain_resolver: string; auto_detect_interface: boolean; rules: Array<Record<string, unknown>>; rule_set: Array<Record<string, unknown>> };
       experimental: { cache_file: { enabled: boolean } };
     };
+    expect(singBox.http_clients).toEqual([{ tag: "rule-set-http", engine: "go", detour: "节点选择" }]);
     expect(singBox.outbounds[0]?.type).toBe(protocol);
     expect(singBox.outbounds[1]).toMatchObject({ type: "selector", tag: "节点选择", outbounds: [`Tokyo · ${type}`], default: `Tokyo · ${type}` });
     expect(singBox.outbounds[2]).toEqual({ type: "direct", tag: "direct" });
@@ -113,6 +115,7 @@ describe("subscriptions", () => {
     ]);
     expect(singBox.route).toMatchObject({
       final: "节点选择",
+      default_http_client: "rule-set-http",
       default_domain_resolver: "local-dns",
       auto_detect_interface: true,
       rules: [

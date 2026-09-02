@@ -254,13 +254,14 @@ describe("control-plane production flow", () => {
 
     const active = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.4" } });
     expect(active.status).toBe(200);
-    const config = await active.json<{ dns: { servers: Array<{ type: string; tag: string }>; rules: Array<{ server: string }> }; inbounds: Array<{ type: string; auto_route: boolean }>; outbounds: Array<{ type: string; tag: string; server?: string; outbounds?: string[] }>; route: { final: string; default_domain_resolver: string; rules: Array<{ rule_set?: string; outbound?: string }>; rule_set: Array<{ tag: string }> }; experimental: { cache_file: { enabled: boolean } } }>();
+    const config = await active.json<{ http_clients: Array<{ tag: string; engine: string; detour: string }>; dns: { servers: Array<{ type: string; tag: string }>; rules: Array<{ server: string }> }; inbounds: Array<{ type: string; auto_route: boolean }>; outbounds: Array<{ type: string; tag: string; server?: string; outbounds?: string[] }>; route: { final: string; default_http_client: string; default_domain_resolver: string; rules: Array<{ rule_set?: string; outbound?: string }>; rule_set: Array<{ tag: string }> }; experimental: { cache_file: { enabled: boolean } } }>();
     expect(config.outbounds).toHaveLength(3);
     expect(config.outbounds[0]?.server).toBe("node.example.com");
     expect(config.outbounds[1]).toMatchObject({ type: "selector", tag: "节点选择", outbounds: ["Tokyo 1 · vless-reality-vision"] });
     expect(config.outbounds[2]).toEqual({ type: "direct", tag: "direct" });
     expect(config.inbounds).toContainEqual(expect.objectContaining({ type: "tun", auto_route: true }));
-    expect(config.route).toMatchObject({ final: "节点选择", default_domain_resolver: "local-dns" });
+    expect(config.http_clients).toEqual([{ tag: "rule-set-http", engine: "go", detour: "节点选择" }]);
+    expect(config.route).toMatchObject({ final: "节点选择", default_http_client: "rule-set-http", default_domain_resolver: "local-dns" });
     expect(config.dns.servers).toContainEqual(expect.objectContaining({ type: "fakeip", tag: "fakeip-dns" }));
     expect(config.dns.rules).toContainEqual(expect.objectContaining({ rule_set: "geosite-cn", server: "local-dns" }));
     expect(config.dns.rules).toContainEqual(expect.objectContaining({ server: "fakeip-dns" }));

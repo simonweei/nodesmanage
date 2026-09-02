@@ -56,8 +56,14 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
   const fakeIpDnsTag = "fakeip-dns";
   const chinaSiteRuleSetTag = "geosite-cn";
   const chinaIpRuleSetTag = "geoip-cn";
+  const ruleSetHttpClientTag = "rule-set-http";
   const proxyTags = proxyOutbounds.map((outbound) => String(outbound.tag));
   return JSON.stringify({
+    http_clients: [{
+      tag: ruleSetHttpClientTag,
+      engine: "go",
+      detour: selectorTag,
+    }],
     dns: {
       servers: [
         { type: "tls", tag: "proxy-dns", server: "8.8.8.8" },
@@ -112,6 +118,7 @@ export function singBoxSubscription(client: ClientRecord, records: NodeRecord[])
         },
       ],
       final: selectorTag,
+      default_http_client: ruleSetHttpClientTag,
       default_domain_resolver: localDnsTag,
       auto_detect_interface: true,
     },
