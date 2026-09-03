@@ -26,6 +26,7 @@ export const TUNNEL_EDGE_PORTS = {
 
 export interface ProfileSettings {
   listen_port: number;
+  shared_uuid?: string;
   edge_port?: number;
   server_name?: string;
   reality_private_key?: string;
@@ -57,6 +58,7 @@ export interface NodeRecord {
   connect_host: string;
   connect_port: number;
   ingress_mode: IngressMode;
+  node_kind?: "managed" | "minimal";
   type: ProfileType;
   settings_json: string;
   protocols_json?: string | null;
@@ -171,6 +173,11 @@ export function parseProfileSettings(type: ProfileType, input: unknown, ingressM
     result.server_name = realityServerName;
     result.reality_handshake_server = realityServerName;
     result.reality_handshake_port = port(value.reality_handshake_port, "reality_handshake_port");
+    if (value.shared_uuid !== undefined) {
+      const sharedUuid = string(value.shared_uuid, "shared_uuid", 36).toLowerCase();
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(sharedUuid)) throw new HttpError(400, "shared_uuid must be a valid UUID");
+      result.shared_uuid = sharedUuid;
+    }
     return result;
   }
   if (type === "shadowsocks-aead") {

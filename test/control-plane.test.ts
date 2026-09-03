@@ -152,6 +152,71 @@ describe("control-plane production flow", () => {
     expect((await jsonRequest(`/api/admin/vps/${value.id}?force=true`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
   });
 
+  it("provisions an Agent-free minimal VPS and serves one shared UUID to all clients", async () => {
+    const created = await jsonRequest("/api/admin/vps", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ node_kind: "minimal", name: "Tiny VPS", region: "HK", connect_host: "tiny.example.com", listen_port: 443, reality_handshake_server: "www.cloudflare.com" }),
+    });
+    expect(created.status).toBe(201);
+    const value = await created.json<{ id: string; ticket: string; node_kind: string; settings: { shared_uuid: string } }>();
+    expect(value).toMatchObject({ node_kind: "minimal", settings: { shared_uuid: expect.stringMatching(/^[0-9a-f-]{36}$/) } });
+
+    const rejectedAgent = await jsonRequest("/api/agent/register", {
+      method: "POST",
+      body: JSON.stringify({ ticket: value.ticket, claim: "44".repeat(32), name: "Tiny VPS", hostname: "tiny", architecture: "amd64", os: "linux", distro: "alpine", distro_version: "", libc: "musl", init_system: "openrc", install_mode: "user" }),
+    });
+    expect(rejectedAgent.status).toBe(409);
+
+    const installer = await SELF.fetch(`${origin}/api/minimal/install/${value.ticket}`, { headers: { "cf-connecting-ip": "198.51.100.20" } });
+    expect(installer.status).toBe(200);
+    expect(installer.headers.get("cache-control")).toBe("no-store");
+    const script = await installer.text();
+    expect(script).toContain('if [ "$(id -u)" -eq 0 ]');
+    expect(script).toContain(value.settings.shared_uuid);
+    expect(script).not.toContain("nodemanage-agent");
+
+    const group = await jsonRequest("/api/admin/subscription-groups", {
+      method: "POST", headers: { cookie: adminCookie },
+      body: JSON.stringify({ name: "Tiny Team", node_ids: [value.id], client_names: ["Alice", "Bob"] }),
+    });
+    expect(group.status).toBe(201);
+    const groupValue = await group.json<{ id: string; members: Array<{ token: string }> }>();
+    const before = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.21" } });
+    expect((await before.json<{ outbounds: unknown[] }>()).outbounds).toHaveLength(0);
+
+    const rejectedUserInstall = await jsonRequest("/api/minimal/complete", { method: "POST", body: JSON.stringify({ ticket: value.ticket, install_mode: "user" }) });
+    expect(rejectedUserInstall.status).toBe(409);
+    const completed = await jsonRequest("/api/minimal/complete", { method: "POST", body: JSON.stringify({ ticket: value.ticket, install_mode: "system" }) });
+    expect(completed.status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT node_kind,provisioned_at,draft,deployment_mode FROM nodes WHERE id=?").bind(value.id).first()).toMatchObject({ node_kind: "minimal", draft: 0, deployment_mode: "system" });
+    for (const member of groupValue.members) {
+      const response = await SELF.fetch(`${origin}/sub/${member.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.22" } });
+      const config = await response.json<{ outbounds: Array<{ uuid?: string }> }>();
+      expect(config.outbounds[0]?.uuid).toBe(value.settings.shared_uuid);
+    }
+    expect((await SELF.fetch(`${origin}/api/minimal/install/${value.ticket}`, { headers: { "cf-connecting-ip": "198.51.100.20" } })).status).toBe(401);
+
+    const metadataUpdate = await jsonRequest(`/api/admin/vps/${value.id}`, {
+      method: "PUT", headers: { cookie: adminCookie },
+      body: JSON.stringify({ node_kind: "minimal", name: "Tiny VPS", region: "HK", connect_host: "tiny-new.example.com", listen_port: 443, reality_handshake_server: "www.cloudflare.com" }),
+    });
+    expect(await metadataUpdate.json()).toMatchObject({ requires_reinstall: false, provisioned_at: expect.any(String) });
+    const runtimeUpdate = await jsonRequest(`/api/admin/vps/${value.id}`, {
+      method: "PUT", headers: { cookie: adminCookie },
+      body: JSON.stringify({ node_kind: "minimal", name: "Tiny VPS", region: "HK", connect_host: "tiny-new.example.com", listen_port: 8443, reality_handshake_server: "www.cloudflare.com" }),
+    });
+    const runtimeValue = await runtimeUpdate.json<{ ticket: string; requires_reinstall: boolean; settings: { shared_uuid: string } }>();
+    expect(runtimeValue).toMatchObject({ requires_reinstall: true, settings: { shared_uuid: value.settings.shared_uuid } });
+    const excluded = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.23" } });
+    expect((await excluded.json<{ outbounds: unknown[] }>()).outbounds).toHaveLength(0);
+    expect((await jsonRequest("/api/minimal/complete", { method: "POST", body: JSON.stringify({ ticket: runtimeValue.ticket, install_mode: "user" }) })).status).toBe(200);
+    const redeployed = await SELF.fetch(`${origin}/sub/${groupValue.members[0]?.token}/sing-box`, { headers: { "cf-connecting-ip": "198.51.100.24" } });
+    expect((await redeployed.json<{ outbounds: Array<{ server: string; server_port: number; uuid: string }> }>()).outbounds[0]).toMatchObject({ server: "tiny-new.example.com", server_port: 8443, uuid: value.settings.shared_uuid });
+
+    expect((await jsonRequest(`/api/admin/subscription-groups/${groupValue.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
+    expect((await jsonRequest(`/api/admin/vps/${value.id}`, { method: "DELETE", headers: { cookie: adminCookie } })).status).toBe(200);
+  });
+
   it("exposes Tunnel capabilities and validates protocol and edge-port combinations", async () => {
     const capabilities = await jsonRequest("/api/admin/ingress-capabilities", { headers: { cookie: adminCookie } });
     expect(await capabilities.json()).toMatchObject({

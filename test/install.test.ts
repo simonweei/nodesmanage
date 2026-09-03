@@ -2,8 +2,37 @@ import { describe, expect, it } from "vitest";
 import { installScript } from "../src/install";
 import { installManifest } from "../src/releases";
 import { hmacHex } from "../src/crypto";
+import { minimalInstallScript } from "../src/minimal-install";
 
 describe("portable bootstrap", () => {
+  it("renders an Agent-free minimal installer with automatic privilege and service detection", async () => {
+    const response = minimalInstallScript({
+      origin: "https://manage.example.com",
+      ticket: "minimal-ticket",
+      settings: {
+        listen_port: 8443,
+        shared_uuid: "11111111-2222-4333-8444-555555555555",
+        server_name: "www.cloudflare.com",
+        reality_handshake_server: "www.cloudflare.com",
+        reality_handshake_port: 443,
+        reality_private_key: "private-key",
+        reality_short_id: "aabbccdd",
+      },
+    });
+    const script = await response.text();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(script).toContain('if [ "$(id -u)" -eq 0 ]');
+    expect(script).toContain("port $LISTEN_PORT requires root");
+    expect(script).toContain("systemctl --user");
+    expect(script).toContain("rc-service nodemanage-minimal restart");
+    expect(script).toContain("start_standalone");
+    expect(script).toContain("GOMEMLIMIT=64MiB");
+    expect(script).not.toContain("GOGC=");
+    expect(script).toContain('"uuid": "11111111-2222-4333-8444-555555555555"');
+    expect(script).toContain("/api/minimal/complete");
+    expect(script).not.toContain("nodemanage-agent");
+  });
+
   it("only verifies and hands installation to the Agent", async () => {
     const script = await installScript("https://manage.example.com").text();
     expect(script).toContain("--ticket");

@@ -3,6 +3,7 @@ import { hmacHex, randomBase64, randomToken, randomUuid, sha256Hex } from "./cry
 import { certificateRequirements, compileServerProfiles, ingressCapabilities, isAcmeProfile, isTunnelProfile, parseProfileSettings, parseProfileType, profileDefaults, profileNetworks, tunnelEdgePort, type CertificateRequirement, type ClientRecord, type IngressMode, type NodeRecord, type ProfileType, type ProtocolProfile, type TunnelKind } from "./domain";
 import { booleanField, HttpError, json, numberField, readJsonObject, stringField } from "./http";
 import { mihomoSubscription, shadowsocksSubscription, singBoxSubscription, v2rayNSubscription } from "./subscriptions";
+import { minimalInstallScript } from "./minimal-install";
 
 interface ProfileRow {
   id: string;
@@ -19,6 +20,7 @@ interface AdminSubscriptionRow extends Record<string, unknown> { id: string; gro
 interface RevisionClientRow { id: string; name: string; uuid: string; shadowsocks_password: string }
 type DeploymentMode = "system" | "user";
 type DeploymentPolicy = "auto" | DeploymentMode;
+type NodeKind = "managed" | "minimal";
 
 function routeParam(path: string, pattern: RegExp): string | null {
   return pattern.exec(path)?.[1] ?? null;
@@ -30,7 +32,7 @@ async function listAdmin(request: Request, env: Env): Promise<Response> {
   const offset = Math.min(10_000, Math.max(0, Number.parseInt(url.searchParams.get("offset") ?? "0", 10) || 0));
   const statements = [
     env.DB.prepare(`SELECT n.id,n.agent_id,n.profile_id,n.name,n.region,
-      n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,n.edge_tls,n.ingress_status,n.ingress_verified_at,n.last_ingress_error,n.deployment_mode,n.deployment_policy,n.enabled,n.draft,n.retiring,n.install_stage,n.last_install_error_code,n.last_install_message,n.last_install_source,n.last_install_at,n.created_at,n.updated_at,
+      n.node_kind,n.provisioned_at,n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,n.edge_tls,n.ingress_status,n.ingress_verified_at,n.last_ingress_error,n.deployment_mode,n.deployment_policy,n.enabled,n.draft,n.retiring,n.install_stage,n.last_install_error_code,n.last_install_message,n.last_install_source,n.last_install_at,n.created_at,n.updated_at,
       p.type,p.settings_json,p.protocols_json,a.hostname,a.os,a.distro,a.distro_version,a.architecture,a.libc,a.init_system,a.install_mode,a.agent_version,a.singbox_version,a.cloudflared_version,a.observed_egress_ip,a.tunnel_running,a.tunnel_hostname,a.tunnel_error,
       a.current_revision,a.desired_revision,a.singbox_running,a.cpu_usage_percent,a.uptime_seconds,a.memory_total_bytes,a.memory_used_bytes,
       a.disk_total_bytes,a.disk_used_bytes,a.permissions_json,a.last_error,a.last_seen,COUNT(*) OVER() AS total_count
@@ -84,6 +86,12 @@ function submittedSettings(body: Record<string, unknown>): Record<string, unknow
 function deploymentPolicy(value: unknown): DeploymentPolicy {
   if (value === undefined || value === null || value === "") return "auto";
   if (value !== "auto" && value !== "system" && value !== "user") throw new HttpError(400, "deployment_policy must be auto, system or user");
+  return value;
+}
+
+function nodeKind(value: unknown): NodeKind {
+  if (value === undefined || value === null || value === "") return "managed";
+  if (value !== "managed" && value !== "minimal") throw new HttpError(400, "node_kind must be managed or minimal");
   return value;
 }
 
@@ -319,10 +327,44 @@ async function freshInstallTicket(nodeId: string, env: Env): Promise<{ id: strin
   return { id, ticket };
 }
 
+async function createMinimalVps(body: Record<string, unknown>, env: Env): Promise<Response> {
+  const id = randomUuid();
+  const profileId = randomUuid();
+  const name = stringField(body, "name", { required: true, max: 100 });
+  const region = stringField(body, "region", { max: 100 });
+  const connectHost = endpointHost(body.connect_host, true, "极简版必须填写平台提供的连接域名");
+  const listenPort = numberField(body, "listen_port", { min: 1, max: 65535, integer: true });
+  if (listenPort === null) throw new HttpError(400, "listen_port is required");
+  const handshakeServer = stringField(body, "reality_handshake_server", { max: 253 }) || "www.cloudflare.com";
+  const defaults = await profileDefaults("vless-reality-vision", "user", "direct");
+  const settings = parseProfileSettings("vless-reality-vision", {
+    ...defaults,
+    listen_port: listenPort,
+    reality_handshake_server: handshakeServer,
+    server_name: handshakeServer,
+    shared_uuid: randomUuid(),
+  });
+  const protocols: ProtocolProfile[] = [{ type: "vless-reality-vision", settings }];
+  const installTicketId = randomUuid();
+  const ticket = randomToken(24);
+  const systemRequired = listenPort <= 1024;
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO profiles(id,name,type,settings_json,protocols_json) VALUES(?,?,?,?,?)").bind(profileId, name, "vless-reality-vision", JSON.stringify(settings), JSON.stringify(protocols)),
+    env.DB.prepare(`INSERT INTO nodes(id,profile_id,name,region,node_kind,ingress_mode,tunnel_kind,connect_host,connect_port,origin_port,edge_tls,ingress_status,deployment_mode,deployment_policy,draft)
+      VALUES(?,?,?,?,'minimal','direct','none',?,?,?,0,'configured',?,'auto',1)`).bind(id, profileId, name, region, connectHost, listenPort, listenPort, systemRequired ? "system" : "user"),
+    env.DB.prepare("INSERT INTO install_tickets(id,node_id,token_hash,expires_at) VALUES(?,?,?,datetime('now','+15 minutes'))").bind(installTicketId, id, await sha256Hex(ticket)),
+    env.DB.prepare("INSERT INTO install_events(node_id,stage,message,source) VALUES(?,'ticket_created','Minimal install ticket created','worker')").bind(id),
+  ]);
+  return json({ id, node_kind: "minimal", name, region, connect_host: connectHost, connect_port: listenPort, origin_port: listenPort,
+    ingress_mode: "direct", tunnel_kind: "none", deployment_policy: "auto", deployment_mode: systemRequired ? "system" : "user",
+    system_required: systemRequired, type: "vless-reality-vision", settings, protocols, ticket, expires_in_seconds: 900 }, { status: 201 });
+}
+
 async function createVps(request: Request, env: Env): Promise<Response> {
   const body = await readJsonObject(request);
   const capacity = await env.DB.prepare("SELECT COUNT(*) AS count FROM nodes").first<{ count: number }>();
   if (Number(capacity?.count ?? 0) >= 200) throw new HttpError(409, "this control plane supports at most 200 VPS nodes");
+  if (nodeKind(body.node_kind) === "minimal") return createMinimalVps(body, env);
   const id = randomUuid();
   const profileId = randomUuid();
   const name = stringField(body, "name", { required: true, max: 100 });
@@ -346,17 +388,48 @@ async function createVps(request: Request, env: Env): Promise<Response> {
   const ticket = randomToken(24);
   await env.DB.batch([
     env.DB.prepare("INSERT INTO profiles(id,name,type,settings_json,protocols_json) VALUES(?,?,?,?,?)").bind(profileId, name, storedProfileType(type), JSON.stringify(settings), JSON.stringify(protocols)),
-    env.DB.prepare("INSERT INTO nodes(id,profile_id,name,region,ingress_mode,tunnel_kind,connect_host,connect_port,origin_port,edge_tls,ingress_status,deployment_mode,deployment_policy,draft) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,1)").bind(id, profileId, name, region, ingress, kind, connectHost, connectPort, originPort, ingress === "cloudflare_tunnel" ? 1 : 0, ingressStatus, mode, policy),
+    env.DB.prepare("INSERT INTO nodes(id,profile_id,name,region,node_kind,ingress_mode,tunnel_kind,connect_host,connect_port,origin_port,edge_tls,ingress_status,deployment_mode,deployment_policy,draft) VALUES(?,?,?,?,'managed',?,?,?,?,?,?,?,?,?,1)").bind(id, profileId, name, region, ingress, kind, connectHost, connectPort, originPort, ingress === "cloudflare_tunnel" ? 1 : 0, ingressStatus, mode, policy),
     env.DB.prepare("INSERT INTO install_tickets(id,node_id,token_hash,expires_at) VALUES(?,?,?,datetime('now','+15 minutes'))").bind(installTicketId, id, await sha256Hex(ticket)),
     env.DB.prepare("INSERT INTO install_events(node_id,stage,message,source) VALUES(?,'ticket_created','Install ticket created','worker')").bind(id),
   ]);
-  return json({ id, name, region, ingress_mode: ingress, tunnel_kind: kind, connect_host: connectHost, connect_port: connectPort, origin_port: originPort, deployment_policy: policy, deployment_mode: mode, system_required: systemRequired, type, settings, protocols, ticket, expires_in_seconds: 900 }, { status: 201 });
+  return json({ id, node_kind: "managed", name, region, ingress_mode: ingress, tunnel_kind: kind, connect_host: connectHost, connect_port: connectPort, origin_port: originPort, deployment_policy: policy, deployment_mode: mode, system_required: systemRequired, type, settings, protocols, ticket, expires_in_seconds: 900 }, { status: 201 });
+}
+
+async function updateMinimalVps(id: string, current: ProfileRow & { profile_id: string; name: string; region: string; connect_host: string; connect_port: number; provisioned_at: string | null }, body: Record<string, unknown>, env: Env): Promise<Response> {
+  const name = stringField(body, "name", { required: true, max: 100 });
+  const region = stringField(body, "region", { max: 100 });
+  const connectHost = endpointHost(body.connect_host, true, "极简版必须填写平台提供的连接域名");
+  const listenPort = numberField(body, "listen_port", { min: 1, max: 65535, integer: true }) ?? current.connect_port;
+  const oldSettings = storedProtocols(current)[0]?.settings;
+  if (!oldSettings) throw new HttpError(500, "minimal VPS profile is missing");
+  const handshakeServer = stringField(body, "reality_handshake_server", { max: 253 }) || oldSettings.reality_handshake_server || "www.cloudflare.com";
+  const settings = parseProfileSettings("vless-reality-vision", {
+    ...oldSettings,
+    listen_port: listenPort,
+    reality_handshake_server: handshakeServer,
+    server_name: handshakeServer,
+  });
+  const protocols: ProtocolProfile[] = [{ type: "vless-reality-vision", settings }];
+  const runtimeChanged = listenPort !== oldSettings.listen_port || handshakeServer !== oldSettings.reality_handshake_server;
+  await env.DB.batch([
+    env.DB.prepare("UPDATE profiles SET name=?,settings_json=?,protocols_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, JSON.stringify(settings), JSON.stringify(protocols), current.profile_id),
+    runtimeChanged
+      ? env.DB.prepare("UPDATE nodes SET name=?,region=?,connect_host=?,connect_port=?,origin_port=?,deployment_mode=?,provisioned_at=NULL,draft=1,install_stage='ticket_created',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, connectHost, listenPort, listenPort, listenPort <= 1024 ? "system" : "user", id)
+      : env.DB.prepare("UPDATE nodes SET name=?,region=?,connect_host=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, connectHost, id),
+  ]);
+  const install = runtimeChanged ? await freshInstallTicket(id, env) : null;
+  return json({ id, node_kind: "minimal", name, region, connect_host: connectHost, connect_port: listenPort, origin_port: listenPort,
+    ingress_mode: "direct", tunnel_kind: "none", deployment_policy: "auto", deployment_mode: listenPort <= 1024 ? "system" : "user",
+    system_required: listenPort <= 1024, type: "vless-reality-vision", settings, protocols, provisioned_at: runtimeChanged ? null : current.provisioned_at,
+    requires_reinstall: runtimeChanged, ...(install ? { ticket: install.ticket, expires_in_seconds: 900 } : {}) });
 }
 
 async function updateVps(id: string, request: Request, env: Env): Promise<Response> {
-  const current = await env.DB.prepare("SELECT n.profile_id,n.agent_id,n.name,n.deployment_mode,n.deployment_policy,n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,p.type,p.settings_json,p.protocols_json FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.id=?").bind(id).first<ProfileRow & { profile_id: string; agent_id: string | null; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string; connect_port: number; origin_port: number }>();
+  const current = await env.DB.prepare("SELECT n.profile_id,n.agent_id,n.node_kind,n.provisioned_at,n.name,n.region,n.deployment_mode,n.deployment_policy,n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,p.type,p.settings_json,p.protocols_json FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.id=?").bind(id).first<ProfileRow & { profile_id: string; agent_id: string | null; node_kind: NodeKind; provisioned_at: string | null; name: string; region: string; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string; connect_port: number; origin_port: number }>();
   if (!current) throw new HttpError(404, "VPS not found");
   const body = await readJsonObject(request);
+  if (body.node_kind !== undefined && nodeKind(body.node_kind) !== current.node_kind) throw new HttpError(409, "VPS 版本不能在线切换，请重新创建节点");
+  if (current.node_kind === "minimal") return updateMinimalVps(id, current, body, env);
   const name = stringField(body, "name", { required: true, max: 100 });
   const region = stringField(body, "region", { max: 100 });
   const policy = body.deployment_policy === undefined && body.deployment_mode === undefined ? current.deployment_policy : deploymentPolicy(body.deployment_policy ?? body.deployment_mode);
@@ -391,10 +464,43 @@ async function updateVps(id: string, request: Request, env: Env): Promise<Respon
 }
 
 async function vpsInstall(id: string, env: Env): Promise<Response> {
-  const node = await env.DB.prepare("SELECT n.name,n.deployment_mode,n.deployment_policy,n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,p.type,p.settings_json,p.protocols_json FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.id=? AND n.enabled=1").bind(id).first<ProfileRow & { name: string; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string; connect_port: number; origin_port: number }>();
+  const node = await env.DB.prepare("SELECT n.node_kind,n.name,n.deployment_mode,n.deployment_policy,n.ingress_mode,n.tunnel_kind,n.connect_host,n.connect_port,n.origin_port,p.type,p.settings_json,p.protocols_json FROM nodes n JOIN profiles p ON p.id=n.profile_id WHERE n.id=? AND n.enabled=1").bind(id).first<ProfileRow & { node_kind: NodeKind; name: string; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode; tunnel_kind: TunnelKind; connect_host: string; connect_port: number; origin_port: number }>();
   if (!node) throw new HttpError(404, "VPS not found");
   const install = await freshInstallTicket(id, env);
-  return json({ id, ticket: install.ticket, deployment_policy: node.deployment_policy, deployment_mode: node.deployment_mode, system_required: requiresSystemDeployment(node.ingress_mode, storedProtocols(node)), ingress_mode: node.ingress_mode, tunnel_kind: node.tunnel_kind, connect_host: node.connect_host, connect_port: node.connect_port, origin_port: node.origin_port, expires_in_seconds: 900 });
+  return json({ id, node_kind: node.node_kind, ticket: install.ticket, deployment_policy: node.deployment_policy, deployment_mode: node.deployment_mode, system_required: requiresSystemDeployment(node.ingress_mode, storedProtocols(node)), ingress_mode: node.ingress_mode, tunnel_kind: node.tunnel_kind, connect_host: node.connect_host, connect_port: node.connect_port, origin_port: node.origin_port, expires_in_seconds: 900 });
+}
+
+async function minimalInstaller(ticket: string, request: Request, env: Env): Promise<Response> {
+  if (!/^[A-Za-z0-9_-]{16,256}$/.test(ticket)) throw new HttpError(401, "invalid or expired minimal install ticket");
+  const ticketHash = await sha256Hex(ticket);
+  const row = await env.DB.prepare(`SELECT p.settings_json FROM install_tickets t
+    JOIN nodes n ON n.id=t.node_id JOIN profiles p ON p.id=n.profile_id
+    WHERE t.token_hash=? AND t.used_at IS NULL AND t.expires_at>CURRENT_TIMESTAMP AND n.enabled=1 AND n.node_kind='minimal'`)
+    .bind(ticketHash).first<{ settings_json: string }>();
+  if (!row) throw new HttpError(401, "invalid or expired minimal install ticket");
+  const settings = parseProfileSettings("vless-reality-vision", JSON.parse(row.settings_json));
+  return minimalInstallScript({ origin: new URL(request.url).origin, ticket, settings });
+}
+
+async function minimalComplete(request: Request, env: Env): Promise<Response> {
+  const body = await readJsonObject(request, 2048);
+  const ticket = stringField(body, "ticket", { required: true, max: 256 });
+  const installMode = stringField(body, "install_mode", { required: true, max: 16 });
+  if (installMode !== "system" && installMode !== "user") throw new HttpError(400, "install_mode must be system or user");
+  const ticketHash = await sha256Hex(ticket);
+  const row = await env.DB.prepare(`SELECT t.id,t.node_id,t.used_at,n.provisioned_at,n.connect_port FROM install_tickets t
+    JOIN nodes n ON n.id=t.node_id WHERE t.token_hash=? AND t.expires_at>CURRENT_TIMESTAMP AND n.enabled=1 AND n.node_kind='minimal'`)
+    .bind(ticketHash).first<{ id: string; node_id: string; used_at: string | null; provisioned_at: string | null; connect_port: number }>();
+  if (!row) throw new HttpError(401, "invalid or expired minimal install ticket");
+  if (installMode === "user" && row.connect_port <= 1024) throw new HttpError(409, "this minimal VPS port requires root installation");
+  if (row.used_at && row.provisioned_at) return json({ ok: true, idempotent: true });
+  if (row.used_at) throw new HttpError(409, "minimal install ticket has already been used");
+  await env.DB.batch([
+    env.DB.prepare("UPDATE nodes SET provisioned_at=CURRENT_TIMESTAMP,deployment_mode=?,draft=0,install_stage='online',last_install_error_code=NULL,last_install_message='Minimal sing-box installed',last_install_source='minimal-installer',last_install_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(installMode, row.node_id),
+    env.DB.prepare("UPDATE install_tickets SET used_at=CURRENT_TIMESTAMP WHERE id=? AND used_at IS NULL").bind(row.id),
+    env.DB.prepare("INSERT INTO install_events(node_id,stage,message,source) VALUES(?,'online','Minimal sing-box installed and checked','minimal-installer')").bind(row.node_id),
+  ]);
+  return json({ ok: true, node_id: row.node_id });
 }
 
 async function createSubscriptionGroup(request: Request, env: Env): Promise<Response> {
@@ -567,8 +673,9 @@ async function publishAgent(agentId: string, env: Env): Promise<Response> {
 }
 
 async function publishVps(id: string, env: Env): Promise<Response> {
-  const node = await env.DB.prepare("SELECT agent_id FROM nodes WHERE id=? AND enabled=1").bind(id).first<{ agent_id: string | null }>();
+  const node = await env.DB.prepare("SELECT agent_id,node_kind FROM nodes WHERE id=? AND enabled=1").bind(id).first<{ agent_id: string | null; node_kind: NodeKind }>();
   if (!node) throw new HttpError(404, "VPS not found");
+  if (node.node_kind === "minimal") throw new HttpError(409, "极简 VPS 使用静态配置，请重新生成安装命令部署");
   if (!node.agent_id) throw new HttpError(409, "请先安装 Agent");
   return publishAgent(node.agent_id, env);
 }
@@ -602,10 +709,11 @@ async function registerAgent(request: Request, env: Env): Promise<Response> {
   const claimHash = await sha256Hex(claim);
   const id = await hmacHex(env.AGENT_TOKEN_SECRET, `agent-id:${ticket}:${claim}`);
   const token = await hmacHex(env.AGENT_TOKEN_SECRET, `agent-token:${ticket}:${claim}`);
-  let use = await env.DB.prepare(`SELECT t.id,t.node_id,t.agent_id,t.claim_hash,t.used_at,n.deployment_mode,n.deployment_policy,n.ingress_mode,p.type,p.settings_json,p.protocols_json FROM install_tickets t JOIN nodes n ON n.id=t.node_id JOIN profiles p ON p.id=n.profile_id
+  let use = await env.DB.prepare(`SELECT t.id,t.node_id,t.agent_id,t.claim_hash,t.used_at,n.node_kind,n.deployment_mode,n.deployment_policy,n.ingress_mode,p.type,p.settings_json,p.protocols_json FROM install_tickets t JOIN nodes n ON n.id=t.node_id JOIN profiles p ON p.id=n.profile_id
     WHERE t.token_hash=? AND t.expires_at>CURRENT_TIMESTAMP AND n.enabled=1`)
-    .bind(ticketHash).first<ProfileRow & { id: string; node_id: string; agent_id: string | null; claim_hash: string | null; used_at: string | null; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode }>();
+    .bind(ticketHash).first<ProfileRow & { id: string; node_id: string; agent_id: string | null; claim_hash: string | null; used_at: string | null; node_kind: NodeKind; deployment_mode: DeploymentMode; deployment_policy: DeploymentPolicy; ingress_mode: IngressMode }>();
   if (!use) throw new HttpError(401, "invalid or expired install ticket");
+  if (use.node_kind === "minimal") throw new HttpError(409, "minimal VPS nodes do not install Agent");
   if (use.deployment_policy !== "auto" && use.deployment_policy !== installMode) throw new HttpError(409, `installer mode ${installMode} does not match VPS deployment policy ${use.deployment_policy}`);
   if (use.agent_id && use.deployment_mode !== installMode) throw new HttpError(409, `install ticket is already bound to ${use.deployment_mode} mode`);
   try {
@@ -814,12 +922,13 @@ async function subscription(path: string, env: Env): Promise<Response> {
     JOIN subscription_groups g ON g.id=s.group_id WHERE s.token_hash=? AND s.enabled=1 AND c.enabled=1 AND g.enabled=1`).bind(tokenHash).first<ClientRecord & { group_id: string; group_name: string }>();
   if (!subscriptionRow) throw new HttpError(404, "subscription not found");
   const client: ClientRecord = subscriptionRow;
-  const nodes = await env.DB.prepare(`SELECT n.id,n.name,n.connect_host,n.connect_port,n.ingress_mode,p.type,p.settings_json,p.protocols_json
+  const nodes = await env.DB.prepare(`SELECT n.id,n.name,n.node_kind,n.connect_host,n.connect_port,n.ingress_mode,p.type,p.settings_json,p.protocols_json
     FROM subscription_group_nodes sgn JOIN nodes n ON n.id=sgn.node_id JOIN profiles p ON p.id=n.profile_id
-    JOIN agents a ON a.id=n.agent_id WHERE sgn.group_id=? AND n.enabled=1 AND n.retiring=0 AND n.draft=0
+    LEFT JOIN agents a ON a.id=n.agent_id WHERE sgn.group_id=? AND n.enabled=1 AND n.retiring=0 AND n.draft=0
     AND n.connect_host<>'' AND ((n.ingress_mode='direct' AND n.ingress_status IN ('configured','verified')) OR (n.ingress_mode='cloudflare_tunnel' AND n.ingress_status='verified'))
-    AND a.current_revision IS NOT NULL AND a.current_revision=a.desired_revision
-    AND a.singbox_running=1 AND a.last_seen>datetime('now','-5 minutes') ORDER BY n.created_at`).bind(subscriptionRow.group_id).all<NodeRecord>();
+    AND ((n.node_kind='minimal' AND n.provisioned_at IS NOT NULL)
+      OR (n.node_kind='managed' AND a.current_revision IS NOT NULL AND a.current_revision=a.desired_revision
+        AND a.singbox_running=1 AND a.last_seen>datetime('now','-5 minutes'))) ORDER BY n.created_at`).bind(subscriptionRow.group_id).all<NodeRecord>();
   const format = match[2];
   const output = format === "sing-box" ? singBoxSubscription(client, nodes.results)
     : format === "mihomo" ? mihomoSubscription(client, nodes.results)
@@ -836,9 +945,10 @@ async function enforcePublicRateLimit(request: Request, env: Env): Promise<void>
   const path = new URL(request.url).pathname;
   const authorization = request.headers.get("authorization") ?? "";
   const subscriptionToken = /^\/sub\/([a-f0-9]{64})\//.exec(path)?.[1] ?? "";
-  const identity = authorization.startsWith("Bearer ") ? authorization.slice(7) : subscriptionToken || request.headers.get("cf-connecting-ip") || "unknown";
+  const minimalToken = /^\/api\/minimal\/install\/([A-Za-z0-9_-]+)$/.exec(path)?.[1] ?? "";
+  const identity = authorization.startsWith("Bearer ") ? authorization.slice(7) : subscriptionToken || minimalToken || request.headers.get("cf-connecting-ip") || "unknown";
   const actor = await sha256Hex(identity);
-  const route = path.startsWith("/sub/") ? "subscription" : path;
+  const route = path.startsWith("/sub/") ? "subscription" : path.startsWith("/api/minimal/install/") ? "minimal_install" : path;
   const result = await env.PUBLIC_RATE_LIMITER.limit({ key: `${route}:${actor}` });
   if (!result.success) {
     console.warn(JSON.stringify({ event: "rate_limited", route: path, actor: actor.slice(0, 12) }));
@@ -851,6 +961,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   const path = url.pathname;
   if (path.startsWith("/sub/")) { await enforcePublicRateLimit(request, env); return subscription(path, env); }
   if (path === "/api/install/event" && request.method === "POST") { await enforcePublicRateLimit(request, env); return installEvent(request, env); }
+  const minimalTicket = routeParam(path, /^\/api\/minimal\/install\/([A-Za-z0-9_-]+)$/);
+  if (minimalTicket && request.method === "GET") { await enforcePublicRateLimit(request, env); return minimalInstaller(minimalTicket, request, env); }
+  if (path === "/api/minimal/complete" && request.method === "POST") { await enforcePublicRateLimit(request, env); return minimalComplete(request, env); }
   if (path === "/api/agent/register" && request.method === "POST") { await enforcePublicRateLimit(request, env); return registerAgent(request, env); }
   if (path === "/api/agent/sync" && request.method === "POST") { await enforcePublicRateLimit(request, env); return syncAgent(request, env); }
   if (path === "/api/agent/result" && request.method === "POST") { await enforcePublicRateLimit(request, env); return agentResult(request, env); }

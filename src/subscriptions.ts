@@ -26,6 +26,8 @@ const uriHost = (address: string): string => address.includes(":") && !address.s
 const yaml = (value: string): string => JSON.stringify(value);
 const tag = (node: ExpandedNode): string => `${node.name} · ${node.type}`;
 const address = (node: ExpandedNode): string => node.settings.server_address || node.connect_host;
+const clientForNode = (client: ClientRecord, node: ExpandedNode): ClientRecord =>
+  node.node_kind === "minimal" && node.settings.shared_uuid ? { ...client, uuid: node.settings.shared_uuid } : client;
 const clientTls = (settings: ProfileSettings, alpn?: string[], useUtls = true): Record<string, unknown> => ({
   enabled: true, server_name: settings.tls_server_name,
   ...(alpn ? { alpn } : {}),
@@ -33,6 +35,7 @@ const clientTls = (settings: ProfileSettings, alpn?: string[], useUtls = true): 
 });
 
 function singOutbound(client: ClientRecord, node: ExpandedNode): Record<string, unknown> {
+  client = clientForNode(client, node);
   const common = { tag: tag(node), server: address(node), server_port: node.settings.listen_port };
   switch (node.type) {
     case "vless-reality-vision": return { ...common, type: "vless", uuid: client.uuid, flow: "xtls-rprx-vision", tls: { enabled: true, server_name: node.settings.server_name, reality: { enabled: true, public_key: node.settings.reality_public_key, short_id: node.settings.reality_short_id }, utls: { enabled: true, fingerprint: "chrome" } } };
@@ -141,6 +144,7 @@ export function shadowsocksSubscription(client: ClientRecord, records: NodeRecor
 }
 
 function mihomoProxy(client: ClientRecord, node: ExpandedNode): string[] {
+  client = clientForNode(client, node);
   const s = node.settings;
   const lines = [`  - name: ${yaml(tag(node))}`, `    server: ${yaml(address(node))}`, `    port: ${s.listen_port}`];
   switch (node.type) {
@@ -160,6 +164,7 @@ export function mihomoSubscription(client: ClientRecord, records: NodeRecord[]):
 }
 
 function uri(client: ClientRecord, node: ExpandedNode): string {
+  client = clientForNode(client, node);
   const s = node.settings;
   const host = uriHost(address(node));
   let url: URL;
