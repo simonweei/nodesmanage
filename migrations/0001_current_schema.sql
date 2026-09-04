@@ -54,6 +54,7 @@ CREATE TABLE nodes (
   profile_id TEXT NOT NULL,
   name TEXT NOT NULL,
   region TEXT NOT NULL DEFAULT '',
+  node_kind TEXT NOT NULL DEFAULT 'managed' CHECK (node_kind IN ('managed', 'minimal')),
   ingress_mode TEXT NOT NULL DEFAULT 'direct' CHECK (ingress_mode IN ('direct', 'cloudflare_tunnel')),
   tunnel_kind TEXT NOT NULL DEFAULT 'none' CHECK (tunnel_kind IN ('none', 'quick', 'named')),
   connect_host TEXT NOT NULL DEFAULT '',
@@ -76,6 +77,7 @@ CREATE TABLE nodes (
   last_install_message TEXT,
   last_install_source TEXT,
   last_install_at TEXT,
+  provisioned_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL,
@@ -193,6 +195,7 @@ CREATE INDEX idx_revisions_agent ON revisions(agent_id, id DESC);
 CREATE INDEX idx_nodes_enabled ON nodes(enabled);
 CREATE INDEX idx_nodes_install_stage ON nodes(install_stage);
 CREATE INDEX idx_nodes_ingress_ready ON nodes(ingress_mode, ingress_status, enabled);
+CREATE INDEX idx_nodes_kind_ready ON nodes(node_kind, provisioned_at, enabled, retiring, draft);
 CREATE INDEX idx_subscriptions_group ON subscriptions(group_id);
 CREATE INDEX idx_subscription_group_nodes_node ON subscription_group_nodes(node_id);
 CREATE INDEX idx_install_tickets_node ON install_tickets(node_id);
