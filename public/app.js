@@ -66,6 +66,10 @@ async function openHelp(){
   helpCommand("修复与升级","repair 修复损坏文件和服务；upgrade 更新并在失败时回滚。","sudo nodemanage-agent repair\nsudo nodemanage-agent upgrade"),
   helpCommand("命令说明","查看全部命令或单个命令参数。","nodemanage-agent help\nnodemanage-agent help repair\nnodemanage-agent version")
  );quick.append(commands);root.append(quick);
+ const minimal=el("section","","help-section"),minimalCommands=el("div","","support-grid");minimal.append(el("h3","极简 VPS 卸载"));minimalCommands.append(
+  helpCommand("普通用户卸载","使用安装极简版的普通用户执行，不要加 sudo。",`systemctl --user disable --now nodemanage-minimal.service 2>/dev/null || true\nrm -f "\${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/nodemanage-minimal.service" "$HOME/.local/bin/sing-box"\nsystemctl --user daemon-reload 2>/dev/null || true\nrm -rf "\${XDG_CONFIG_HOME:-$HOME/.config}/sing-box" "\${XDG_STATE_HOME:-$HOME/.local/state}/nodemanage-minimal"`),
+  helpCommand("root 卸载","使用 sudo/root 安装极简版时执行。",`sudo systemctl disable --now nodemanage-minimal.service 2>/dev/null || true\nsudo rc-service nodemanage-minimal stop 2>/dev/null || true\nsudo rc-update del nodemanage-minimal default 2>/dev/null || true\nsudo rm -f /etc/systemd/system/nodemanage-minimal.service /etc/init.d/nodemanage-minimal /usr/local/bin/sing-box\nsudo systemctl daemon-reload 2>/dev/null || true\nsudo rm -rf /etc/sing-box /var/lib/nodemanage-minimal`)
+ );minimal.append(minimalCommands);root.append(minimal);
  const troubleshooting=el("section","","help-section");troubleshooting.append(el("h3","快速排障"),
   helpTopic("Agent 离线",["确认执行身份与安装模式一致，然后运行 diagnose --full。","查看 agent 日志，确认 DNS、系统时间及到管理域名 HTTPS 的出站访问。","配置和网络正常后再运行 repair；不要先删除 VPS 或清空配置。"]),
   helpTopic("配置未生效",["运行 status，对比 current_revision 与面板运行版本。","检查 sing_box_running 和 runtime_valid；再查看 sing-box 日志。","面板重新发布后可运行 once 触发一次同步。"]),
