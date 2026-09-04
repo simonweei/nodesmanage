@@ -335,6 +335,7 @@ async function createMinimalVps(body: Record<string, unknown>, env: Env): Promis
   const connectHost = endpointHost(body.connect_host, true, "极简版必须填写平台提供的连接域名");
   const listenPort = numberField(body, "listen_port", { min: 1, max: 65535, integer: true });
   if (listenPort === null) throw new HttpError(400, "listen_port is required");
+  const connectPort = numberField(body, "connect_port", { min: 1, max: 65535, integer: true }) ?? listenPort;
   const handshakeServer = stringField(body, "reality_handshake_server", { max: 253 }) || "www.cloudflare.com";
   const defaults = await profileDefaults("vless-reality-vision", "user", "direct");
   const settings = parseProfileSettings("vless-reality-vision", {
@@ -351,11 +352,11 @@ async function createMinimalVps(body: Record<string, unknown>, env: Env): Promis
   await env.DB.batch([
     env.DB.prepare("INSERT INTO profiles(id,name,type,settings_json,protocols_json) VALUES(?,?,?,?,?)").bind(profileId, name, "vless-reality-vision", JSON.stringify(settings), JSON.stringify(protocols)),
     env.DB.prepare(`INSERT INTO nodes(id,profile_id,name,region,node_kind,ingress_mode,tunnel_kind,connect_host,connect_port,origin_port,edge_tls,ingress_status,deployment_mode,deployment_policy,draft)
-      VALUES(?,?,?,?,'minimal','direct','none',?,?,?,0,'configured',?,'auto',1)`).bind(id, profileId, name, region, connectHost, listenPort, listenPort, systemRequired ? "system" : "user"),
+      VALUES(?,?,?,?,'minimal','direct','none',?,?,?,0,'configured',?,'auto',1)`).bind(id, profileId, name, region, connectHost, connectPort, listenPort, systemRequired ? "system" : "user"),
     env.DB.prepare("INSERT INTO install_tickets(id,node_id,token_hash,expires_at) VALUES(?,?,?,datetime('now','+15 minutes'))").bind(installTicketId, id, await sha256Hex(ticket)),
     env.DB.prepare("INSERT INTO install_events(node_id,stage,message,source) VALUES(?,'ticket_created','Minimal install ticket created','worker')").bind(id),
   ]);
-  return json({ id, node_kind: "minimal", name, region, connect_host: connectHost, connect_port: listenPort, origin_port: listenPort,
+  return json({ id, node_kind: "minimal", name, region, connect_host: connectHost, connect_port: connectPort, origin_port: listenPort,
     ingress_mode: "direct", tunnel_kind: "none", deployment_policy: "auto", deployment_mode: systemRequired ? "system" : "user",
     system_required: systemRequired, type: "vless-reality-vision", settings, protocols, ticket, expires_in_seconds: 900 }, { status: 201 });
 }
@@ -395,13 +396,14 @@ async function createVps(request: Request, env: Env): Promise<Response> {
   return json({ id, node_kind: "managed", name, region, ingress_mode: ingress, tunnel_kind: kind, connect_host: connectHost, connect_port: connectPort, origin_port: originPort, deployment_policy: policy, deployment_mode: mode, system_required: systemRequired, type, settings, protocols, ticket, expires_in_seconds: 900 }, { status: 201 });
 }
 
-async function updateMinimalVps(id: string, current: ProfileRow & { profile_id: string; name: string; region: string; connect_host: string; connect_port: number; provisioned_at: string | null }, body: Record<string, unknown>, env: Env): Promise<Response> {
+async function updateMinimalVps(id: string, current: ProfileRow & { profile_id: string; name: string; region: string; connect_host: string; connect_port: number; origin_port: number; provisioned_at: string | null }, body: Record<string, unknown>, env: Env): Promise<Response> {
   const name = stringField(body, "name", { required: true, max: 100 });
   const region = stringField(body, "region", { max: 100 });
   const connectHost = endpointHost(body.connect_host, true, "极简版必须填写平台提供的连接域名");
-  const listenPort = numberField(body, "listen_port", { min: 1, max: 65535, integer: true }) ?? current.connect_port;
   const oldSettings = storedProtocols(current)[0]?.settings;
   if (!oldSettings) throw new HttpError(500, "minimal VPS profile is missing");
+  const listenPort = numberField(body, "listen_port", { min: 1, max: 65535, integer: true }) ?? oldSettings.listen_port ?? current.origin_port;
+  const connectPort = numberField(body, "connect_port", { min: 1, max: 65535, integer: true }) ?? current.connect_port;
   const handshakeServer = stringField(body, "reality_handshake_server", { max: 253 }) || oldSettings.reality_handshake_server || "www.cloudflare.com";
   const settings = parseProfileSettings("vless-reality-vision", {
     ...oldSettings,
@@ -414,11 +416,11 @@ async function updateMinimalVps(id: string, current: ProfileRow & { profile_id: 
   await env.DB.batch([
     env.DB.prepare("UPDATE profiles SET name=?,settings_json=?,protocols_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, JSON.stringify(settings), JSON.stringify(protocols), current.profile_id),
     runtimeChanged
-      ? env.DB.prepare("UPDATE nodes SET name=?,region=?,connect_host=?,connect_port=?,origin_port=?,deployment_mode=?,provisioned_at=NULL,draft=1,install_stage='ticket_created',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, connectHost, listenPort, listenPort, listenPort <= 1024 ? "system" : "user", id)
-      : env.DB.prepare("UPDATE nodes SET name=?,region=?,connect_host=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, connectHost, id),
+      ? env.DB.prepare("UPDATE nodes SET name=?,region=?,connect_host=?,connect_port=?,origin_port=?,deployment_mode=?,provisioned_at=NULL,draft=1,install_stage='ticket_created',updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, connectHost, connectPort, listenPort, listenPort <= 1024 ? "system" : "user", id)
+      : env.DB.prepare("UPDATE nodes SET name=?,region=?,connect_host=?,connect_port=?,origin_port=?,updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(name, region, connectHost, connectPort, listenPort, id),
   ]);
   const install = runtimeChanged ? await freshInstallTicket(id, env) : null;
-  return json({ id, node_kind: "minimal", name, region, connect_host: connectHost, connect_port: listenPort, origin_port: listenPort,
+  return json({ id, node_kind: "minimal", name, region, connect_host: connectHost, connect_port: connectPort, origin_port: listenPort,
     ingress_mode: "direct", tunnel_kind: "none", deployment_policy: "auto", deployment_mode: listenPort <= 1024 ? "system" : "user",
     system_required: listenPort <= 1024, type: "vless-reality-vision", settings, protocols, provisioned_at: runtimeChanged ? null : current.provisioned_at,
     requires_reinstall: runtimeChanged, ...(install ? { ticket: install.ticket, expires_in_seconds: 900 } : {}) });
@@ -488,11 +490,11 @@ async function minimalComplete(request: Request, env: Env): Promise<Response> {
   const installMode = stringField(body, "install_mode", { required: true, max: 16 });
   if (installMode !== "system" && installMode !== "user") throw new HttpError(400, "install_mode must be system or user");
   const ticketHash = await sha256Hex(ticket);
-  const row = await env.DB.prepare(`SELECT t.id,t.node_id,t.used_at,n.provisioned_at,n.connect_port FROM install_tickets t
+  const row = await env.DB.prepare(`SELECT t.id,t.node_id,t.used_at,n.provisioned_at,n.origin_port FROM install_tickets t
     JOIN nodes n ON n.id=t.node_id WHERE t.token_hash=? AND t.expires_at>CURRENT_TIMESTAMP AND n.enabled=1 AND n.node_kind='minimal'`)
-    .bind(ticketHash).first<{ id: string; node_id: string; used_at: string | null; provisioned_at: string | null; connect_port: number }>();
+    .bind(ticketHash).first<{ id: string; node_id: string; used_at: string | null; provisioned_at: string | null; origin_port: number }>();
   if (!row) throw new HttpError(401, "invalid or expired minimal install ticket");
-  if (installMode === "user" && row.connect_port <= 1024) throw new HttpError(409, "this minimal VPS port requires root installation");
+  if (installMode === "user" && row.origin_port <= 1024) throw new HttpError(409, "this minimal VPS listen port requires root installation");
   if (row.used_at && row.provisioned_at) return json({ ok: true, idempotent: true });
   if (row.used_at) throw new HttpError(409, "minimal install ticket has already been used");
   await env.DB.batch([

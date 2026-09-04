@@ -97,10 +97,11 @@ describe("subscriptions", () => {
       settings_json: JSON.stringify({ ...cases[0][1], shared_uuid: sharedUuid }),
     };
     const otherClient = { ...client, uuid: "99999999-8888-4777-8666-555555555555" };
-    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds[0]).toMatchObject({ uuid: sharedUuid });
+    expect(JSON.parse(singBoxSubscription(client, [node])).outbounds[0]).toMatchObject({ uuid: sharedUuid, server_port: 8443 });
     expect(JSON.parse(singBoxSubscription(otherClient, [node])).outbounds[0]).toMatchObject({ uuid: sharedUuid });
     expect(mihomoSubscription(otherClient, [node])).toContain(`uuid: ${JSON.stringify(sharedUuid)}`);
-    expect(uriSubscription(otherClient, [node])).toContain(`vless://${sharedUuid}@`);
+    expect(mihomoSubscription(otherClient, [node])).toContain("    port: 8443");
+    expect(uriSubscription(otherClient, [node])).toContain(`vless://${sharedUuid}@tiny.example.com:8443`);
   });
 
   it.each(cases)("generates sing-box, Mihomo and URI for %s", (type, settings, protocol) => {

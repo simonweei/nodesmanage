@@ -77,11 +77,11 @@ VPS 列表集中显示 Agent/sing-box/配置版本、CPU/内存/运行时间、�
 
 ### 极简 VPS
 
-创建 VPS 时可选择“全能版”或“极简版”。极简版面向约 128MB 内存、512MB 硬盘的 Linux VPS，固定使用 Direct `VLESS Reality + Vision`，公网域名与监听端口由服务器平台提供且内外端口相同。它不安装 Agent、cloudflared，也不轮询控制面；每台极简 VPS 生成一个固定 UUID，绑定到该节点的所有订阅客户端共享此凭据，因此不能单独撤销某个客户端的节点访问权限。
+创建 VPS 时可选择“全能版”或“极简版”。极简版面向约 128MB 内存、512MB 硬盘的 Linux VPS，固定使用 Direct `VLESS Reality + Vision`；公网域名、公网端口和 VPS 内部监听端口可以分别配置。它不安装 Agent、cloudflared，也不轮询控制面；每台极简 VPS 生成一个固定 UUID，绑定到该节点的所有订阅客户端共享此凭据，因此不能单独撤销某个客户端的节点访问权限。
 
-极简部署命令会自动判断权限：root 使用 `/usr/local/bin`、`/etc/sing-box` 和系统级 systemd/OpenRC；普通用户使用 `~/.local/bin`、用户配置目录和 `systemd --user`。普通用户不能监听 1024 以下端口。缺少服务管理器时脚本会使用 standalone 后台进程并明确提示无法保证重启自启。安装过程校验固定 sing-box 包，只保留二进制和静态配置，并设置 `GOMEMLIMIT=64MiB` 控制 Go 堆内存，成功后仅向控制面发送一次安装回执。
+极简部署命令会自动判断权限：root 使用 `/usr/local/bin`、`/etc/sing-box` 和系统级 systemd/OpenRC；普通用户使用 `~/.local/bin`、用户配置目录和 `systemd --user`。普通用户不能使用不高于 1024 的内部监听端口；公网端口不参与权限判断。缺少服务管理器时脚本会使用 standalone 后台进程并明确提示无法保证重启自启。安装过程校验固定 sing-box 包，只保留二进制和静态配置，并设置 `GOMEMLIMIT=64MiB` 控制 Go 堆内存，成功后仅向控制面发送一次安装回执。
 
-控制面将极简节点显示为“已部署（不监控）”，不会产生 Agent 离线告警。名称、地区和公网域名可直接修改；端口或 Reality 目标发生变化会使节点退出订阅并要求重新执行部署命令。重新生成部署票据不会轮换共享 UUID；需要轮换凭据时应删除并重新创建极简节点。
+控制面将极简节点显示为“已部署（不监控）”，不会产生 Agent 离线告警。名称、地区、公网域名和公网端口可直接修改，订阅会立即使用新的公网入口；内部监听端口或 Reality 目标发生变化会使节点退出订阅并要求重新执行部署命令。重新生成部署票据不会轮换共享 UUID；需要轮换凭据时应删除并重新创建极简节点。
 
 系统级部署以 root 安装到 `/usr/local/bin`、`/etc/nodemanage` 和 `/etc/sing-box`，支持 systemd 与 OpenRC，也能监听 443 等低端口：
 

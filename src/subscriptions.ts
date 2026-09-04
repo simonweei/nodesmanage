@@ -14,12 +14,15 @@ const expand = (nodes: NodeRecord[]): ExpandedNode[] => nodes.flatMap((node) => 
       }
     }
     return { ...node, type: profile.type, settings: node.ingress_mode === "cloudflare_tunnel" ? {
-    ...settings,
-    listen_port: profile.settings.edge_port || node.connect_port || 443,
-    server_address: node.connect_host,
-    tls_server_name: node.connect_host,
-    websocket_host: node.connect_host,
-  } : settings };
+      ...settings,
+      listen_port: profile.settings.edge_port || node.connect_port || 443,
+      server_address: node.connect_host,
+      tls_server_name: node.connect_host,
+      websocket_host: node.connect_host,
+    } : node.node_kind === "minimal" ? {
+      ...settings,
+      listen_port: node.connect_port || settings.listen_port,
+    } : settings };
   });
 });
 const uriHost = (address: string): string => address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
