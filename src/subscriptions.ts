@@ -151,7 +151,7 @@ function mihomoProxy(client: ClientRecord, node: ExpandedNode): string[] {
   const s = node.settings;
   const lines = [`  - name: ${yaml(tag(node))}`, `    server: ${yaml(address(node))}`, `    port: ${s.listen_port}`];
   switch (node.type) {
-    case "vless-reality-vision": return [...lines, "    type: vless", `    uuid: ${yaml(client.uuid)}`, "    network: tcp", "    tls: true", `    servername: ${yaml(s.server_name ?? "")}`, "    flow: xtls-rprx-vision", "    reality-opts:", `      public-key: ${yaml(s.reality_public_key ?? "")}`, `      short-id: ${yaml(s.reality_short_id ?? "")}`, "    client-fingerprint: chrome"];
+    case "vless-reality-vision": return [...lines, "    type: vless", `    uuid: ${yaml(client.uuid)}`, "    network: tcp", "    udp: true", "    packet-encoding: xudp", `    encryption: ${yaml("")}`, "    tls: true", `    servername: ${yaml(s.server_name ?? "")}`, "    flow: xtls-rprx-vision", "    reality-opts:", `      public-key: ${yaml(s.reality_public_key ?? "")}`, `      short-id: ${yaml(s.reality_short_id ?? "")}`, "    client-fingerprint: chrome"];
     case "shadowsocks-aead": return [...lines, "    type: ss", `    cipher: ${yaml(s.shadowsocks_method ?? "")}`, `    password: ${yaml(`${s.shadowsocks_server_password}:${client.shadowsocks_password}`)}`, "    udp: true"];
     case "vless-tls-websocket": return [...lines, "    type: vless", `    uuid: ${yaml(client.uuid)}`, "    network: ws", "    tls: true", `    servername: ${yaml(s.tls_server_name ?? "")}`, "    client-fingerprint: chrome", "    ws-opts:", `      path: ${yaml(s.websocket_path ?? "/")}`, "      headers:", `        Host: ${yaml(s.websocket_host ?? "")}`];
     case "vless-tls-grpc": return [...lines, "    type: vless", `    uuid: ${yaml(client.uuid)}`, "    network: grpc", "    tls: true", `    servername: ${yaml(s.tls_server_name ?? "")}`, "    client-fingerprint: chrome", "    grpc-opts:", `      grpc-service-name: ${yaml(s.grpc_service_name ?? "")}`];
@@ -163,7 +163,24 @@ function mihomoProxy(client: ClientRecord, node: ExpandedNode): string[] {
 }
 
 export function mihomoSubscription(client: ClientRecord, records: NodeRecord[]): string {
-  return `${["proxies:", ...expand(records).flatMap((node) => mihomoProxy(client, node))].join("\n")}\n`;
+  const nodes = expand(records);
+  const proxyNames = nodes.map((node) => tag(node));
+  return `${[
+    "mixed-port: 7890",
+    "allow-lan: false",
+    "mode: rule",
+    "log-level: info",
+    "ipv6: true",
+    "proxies:",
+    ...nodes.flatMap((node) => mihomoProxy(client, node)),
+    "proxy-groups:",
+    "  - name: 节点选择",
+    "    type: select",
+    "    proxies:",
+    ...proxyNames.map((name) => `      - ${yaml(name)}`),
+    "rules:",
+    "  - MATCH,节点选择",
+  ].join("\n")}\n`;
 }
 
 function uri(client: ClientRecord, node: ExpandedNode): string {
@@ -175,7 +192,7 @@ function uri(client: ClientRecord, node: ExpandedNode): string {
     url = new URL(`vless://${client.uuid}@${host}:${s.listen_port}`);
     url.searchParams.set("encryption", "none");
     if (node.type === "vless-reality-vision") {
-      url.searchParams.set("flow", "xtls-rprx-vision"); url.searchParams.set("security", "reality"); url.searchParams.set("sni", s.server_name ?? ""); url.searchParams.set("fp", "chrome"); url.searchParams.set("pbk", s.reality_public_key ?? ""); url.searchParams.set("sid", s.reality_short_id ?? "");
+      url.searchParams.set("flow", "xtls-rprx-vision"); url.searchParams.set("security", "reality"); url.searchParams.set("sni", s.server_name ?? ""); url.searchParams.set("fp", "chrome"); url.searchParams.set("pbk", s.reality_public_key ?? ""); url.searchParams.set("sid", s.reality_short_id ?? ""); url.searchParams.set("type", "tcp"); url.searchParams.set("headerType", "none");
     } else if (node.type === "vless-tls-websocket") {
       url.searchParams.set("security", "tls"); url.searchParams.set("sni", s.tls_server_name ?? ""); url.searchParams.set("fp", "chrome"); url.searchParams.set("type", "ws"); url.searchParams.set("host", s.websocket_host ?? ""); url.searchParams.set("path", s.websocket_path ?? "/");
     } else if (node.type === "vless-tls-grpc") {

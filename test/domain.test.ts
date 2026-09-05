@@ -174,6 +174,20 @@ describe("subscriptions", () => {
     }
   });
 
+  it("emits complete Mihomo and v2rayN Reality subscriptions", () => {
+    const [type, settings] = cases[0];
+    const node = { id: "node-reality", name: "Tokyo", connect_host: "node.example.com", connect_port: settings.listen_port, ingress_mode: "direct" as const, type, settings_json: JSON.stringify(settings) };
+    const mihomo = mihomoSubscription(client, [node]);
+    expect(mihomo).toContain("mixed-port: 7890");
+    expect(mihomo).toContain("    packet-encoding: xudp");
+    expect(mihomo).toContain("proxy-groups:");
+    expect(mihomo).toContain("  - MATCH,节点选择");
+
+    const realityUri = new URL(uriSubscription(client, [node]).trim());
+    expect(realityUri.searchParams.get("type")).toBe("tcp");
+    expect(realityUri.searchParams.get("headerType")).toBe("none");
+  });
+
   it("emits cross-core TUIC compatibility parameters", () => {
     const node = { id: "node-tuic", name: "Tokyo", connect_host: "tuic.example.net", connect_port: 10443, ingress_mode: "direct" as const, type: "tuic" as const, settings_json: JSON.stringify(cases[5][1]) };
     const outbound = JSON.parse(singBoxSubscription(client, [node])).outbounds[0] as { heartbeat: string; tls: { alpn: string[] } };
